@@ -1,0 +1,6 @@
+{
+  "name": "Folio",
+  "description": "A focused conversational workspace for drafting, reasoning, and exploring ideas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
