@@ -1,18 +1,25 @@
 import React, { useMemo, useState } from 'react';
 import {
   Check,
+  EyeOff,
+  Folder,
+  History,
   Moon,
   PanelLeft,
   Pencil,
+  Plus,
   Search,
   Shield,
   SlidersHorizontal,
   SquarePen,
   Sun,
   Trash2,
+  User,
   X,
 } from 'lucide-react';
 import { ConversationThread } from '../types/chat';
+import { FOLIO_CURRENT_VERSION } from '../data/changelogs';
+import { RETENTION_OPTIONS } from '../data/presets';
 
 interface SidebarProps {
   threads: ConversationThread[];
@@ -25,11 +32,16 @@ interface SidebarProps {
   onCollapseDesktop: () => void;
   onSelectThread: (id: string) => void;
   onNewChat: () => void;
+  onNewIncognitoChat: () => void;
   onRenameThread: (id: string, title: string) => void;
   onDeleteThread: (id: string) => void;
   onToggleTheme: () => void;
   onOpenInstructions: () => void;
+  onCreateInstruction?: () => void;
   onOpenSafety: () => void;
+  onOpenChangelogs?: () => void;
+  userAccount?: { displayName: string; email: string; photoURL?: string } | null;
+  onOpenAccount?: () => void;
 }
 
 function getDateBucket(timestamp: number): 'Today' | 'Previous 7 Days' | 'Earlier' {
@@ -53,11 +65,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCollapseDesktop,
   onSelectThread,
   onNewChat,
+  onNewIncognitoChat,
   onRenameThread,
   onDeleteThread,
   onToggleTheme,
   onOpenInstructions,
+  onCreateInstruction,
   onOpenSafety,
+  onOpenChangelogs,
+  userAccount,
+  onOpenAccount,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -136,6 +153,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="font-display text-base font-semibold tracking-tight text-[#0d0d0d] dark:text-[#ececec] px-1 whitespace-nowrap shrink-0">
             Folio
           </span>
+          {onOpenChangelogs ? (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenChangelogs();
+                onCloseMobile();
+              }}
+              title="Release notes & Changelogs"
+              className="text-[10px] font-mono font-semibold text-sky-600 dark:text-sky-400 hover:underline whitespace-nowrap shrink-0"
+            >
+              {FOLIO_CURRENT_VERSION}
+            </button>
+          ) : (
+            <span className="text-[10px] font-mono font-semibold text-sky-600 dark:text-sky-400 whitespace-nowrap shrink-0">
+              {FOLIO_CURRENT_VERSION}
+            </span>
+          )}
         </div>
 
         <button
@@ -153,17 +187,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div className="px-3 pb-2 space-y-1.5">
-        <button
-          type="button"
-          onClick={() => {
-            onNewChat();
-            onCloseMobile();
-          }}
-          className="w-full min-h-[40px] px-3 py-2 rounded-xl text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] flex items-center gap-2.5 transition-colors duration-150 whitespace-nowrap"
-        >
-          <SquarePen className="w-4 h-4 text-neutral-500 dark:text-neutral-400 shrink-0" />
-          <span>New chat</span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              onNewChat();
+              onCloseMobile();
+            }}
+            className="flex-1 min-h-[40px] px-3 py-2 rounded-xl text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] flex items-center gap-2 transition-colors duration-150 whitespace-nowrap"
+          >
+            <SquarePen className="w-4 h-4 text-neutral-500 dark:text-neutral-400 shrink-0" />
+            <span>New chat</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onNewIncognitoChat();
+              onCloseMobile();
+            }}
+            title="New Incognito chat (ephemeral & isolated)"
+            aria-label="New Incognito chat"
+            className="inline-flex items-center justify-center w-10 h-10 rounded-xl border border-neutral-200 dark:border-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-[#ececec] dark:hover:bg-[#212121] transition-colors shrink-0"
+          >
+            <EyeOff className="w-4 h-4" />
+          </button>
+        </div>
 
         <div className="relative">
           <Search className="w-4 h-4 text-neutral-400 dark:text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -246,9 +294,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 onSelectThread(thread.id);
                                 onCloseMobile();
                               }}
-                              className="flex-1 min-w-0 text-left px-2.5 py-2 text-sm truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 rounded-lg"
+                              className="flex-1 min-w-0 text-left px-2.5 py-2 text-sm flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 rounded-lg"
                             >
-                              {thread.title}
+                              {thread.incognito && (
+                                <EyeOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              )}
+                              {!thread.incognito && thread.groupName && (
+                                <Folder className="w-3 h-3 text-blue-500 shrink-0" />
+                              )}
+                              <span className="truncate">{thread.title}</span>
+                              {thread.retention && thread.retention !== 'permanent' && (
+                                <span className="ml-auto text-[10px] font-mono text-amber-600 dark:text-amber-400 shrink-0">
+                                  {RETENTION_OPTIONS.find((r) => r.id === thread.retention)
+                                    ?.shortLabel || thread.retention}
+                                </span>
+                              )}
                             </button>
 
                             <div
@@ -311,24 +371,59 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => {
-            onOpenInstructions();
-            onCloseMobile();
-          }}
-          className="w-full min-h-[40px] px-2.5 py-2 rounded-lg text-sm text-neutral-700 dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] flex items-center justify-between transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
-        >
-          <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
-            <SlidersHorizontal className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
-            <span>Custom instructions</span>
-          </span>
-          {hasCustomInstructions && (
-            <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
-              On
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              onOpenInstructions();
+              onCloseMobile();
+            }}
+            className="flex-1 min-w-0 min-h-[40px] px-2.5 py-2 rounded-lg text-sm text-neutral-700 dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] flex items-center justify-between transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
+          >
+            <span className="inline-flex items-center gap-2.5 whitespace-nowrap truncate">
+              <SlidersHorizontal className="w-4 h-4 text-neutral-500 dark:text-neutral-400 shrink-0" />
+              <span className="truncate">Custom instructions</span>
             </span>
+            {hasCustomInstructions && (
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 shrink-0">
+                On
+              </span>
+            )}
+          </button>
+          {onCreateInstruction && (
+            <button
+              type="button"
+              onClick={() => {
+                onCreateInstruction();
+                onCloseMobile();
+              }}
+              aria-label="Create new custom instruction"
+              title="Create new instruction profile (+)"
+              className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-neutral-200 dark:border-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-[#ececec] dark:hover:bg-[#212121] hover:text-[#0d0d0d] dark:hover:text-white transition-colors shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
           )}
-        </button>
+        </div>
+
+        {onOpenChangelogs && (
+          <button
+            type="button"
+            onClick={() => {
+              onOpenChangelogs();
+              onCloseMobile();
+            }}
+            className="w-full min-h-[40px] px-2.5 py-2 rounded-lg text-sm text-neutral-700 dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] flex items-center justify-between transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
+          >
+            <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
+              <History className="w-4 h-4 text-sky-500" />
+              <span>Changelogs</span>
+            </span>
+            <span className="text-[11px] font-mono font-medium text-sky-600 dark:text-sky-400">
+              {FOLIO_CURRENT_VERSION}
+            </span>
+          </button>
+        )}
 
         <button
           type="button"
@@ -344,6 +439,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span>{theme === 'dark' ? 'Light appearance' : 'Dark appearance'}</span>
           </span>
         </button>
+
+        {onOpenAccount && (
+          <button
+            type="button"
+            onClick={() => {
+              onOpenAccount();
+              onCloseMobile();
+            }}
+            className="w-full min-h-[44px] mt-1 px-2.5 py-2 rounded-xl border border-neutral-200/80 dark:border-white/10 bg-white/70 dark:bg-white/[0.03] text-sm text-neutral-800 dark:text-[#ececec] hover:bg-[#ececec] dark:hover:bg-[#212121] flex items-center gap-2.5 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
+          >
+            {userAccount?.photoURL ? (
+              <img
+                src={userAccount.photoURL}
+                alt={userAccount.displayName}
+                className="w-6 h-6 rounded-full object-cover shrink-0 border border-neutral-300 dark:border-white/15"
+              />
+            ) : (
+              <span className="w-6 h-6 rounded-full bg-neutral-200 dark:bg-white/10 flex items-center justify-center shrink-0">
+                <User className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+              </span>
+            )}
+            <span className="min-w-0 flex-1 text-left">
+              <span className="block text-xs font-medium truncate">
+                {userAccount ? userAccount.displayName : 'Sign in / Account'}
+              </span>
+              <span className="block text-[10px] text-neutral-500 dark:text-neutral-400 truncate">
+                {userAccount ? userAccount.email : 'Sync instructions, fonts & tools'}
+              </span>
+            </span>
+          </button>
+        )}
       </div>
     </aside>
   );

@@ -5,6 +5,11 @@ import {
   VectorStopMotionSpec,
   VectorStrokeElement,
 } from '../types/stopMotion';
+import type { MathAudioTrackSpec } from './mathAudioSynth';
+import {
+  compileStopMotionSceneV2,
+  isStopMotionSceneV2,
+} from './stopMotionEngine';
 
 export const VECTOR_BRUSH_META: Array<{
   id: VectorBrushStyle;
@@ -17,6 +22,10 @@ export const VECTOR_BRUSH_META: Array<{
   { id: 'highlighter', label: 'Highlighter', description: 'Translucent cel-shading tint' },
   { id: 'dashed', label: 'Dashed Arc', description: 'Stitched motion-line path' },
   { id: 'dots', label: 'Stipple Dots', description: 'Beaded vector dot trail' },
+  { id: 'airbrush', label: 'Airbrush', description: 'Soft feathered mist & scatter' },
+  { id: 'neon', label: 'Neon Tube', description: 'Luminous outer aura + core' },
+  { id: 'watercolor', label: 'Watercolor', description: 'Translucent layered wet wash' },
+  { id: 'pixel', label: 'Pixel Brush', description: 'Snapped crisp grid squares' },
 ];
 
 export function isVectorBrushStyle(tool: string): tool is VectorBrushStyle {
@@ -26,7 +35,11 @@ export function isVectorBrushStyle(tool: string): tool is VectorBrushStyle {
     tool === 'marker' ||
     tool === 'highlighter' ||
     tool === 'dashed' ||
-    tool === 'dots'
+    tool === 'dots' ||
+    tool === 'airbrush' ||
+    tool === 'neon' ||
+    tool === 'watercolor' ||
+    tool === 'pixel'
   );
 }
 
@@ -89,6 +102,27 @@ export function vectorElementsToSvgMarkup(elements: VectorStrokeElement[]): stri
           return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 1.45).toFixed(1)}" stroke-linecap="square" stroke-linejoin="round" opacity="0.88" />`;
         case 'dashed':
           return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${el.width}" stroke-linecap="round" stroke-dasharray="${Math.max(6, el.width * 2.2).toFixed(0)} ${Math.max(4, el.width * 1.5).toFixed(0)}" />`;
+        case 'airbrush':
+          return `<g opacity="0.45"><path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 3.2).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.28" filter="url(#airbrushSoft)" /><path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 1.6).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.4" /></g>`;
+        case 'neon':
+          return `<g filter="url(#neonBloom)"><path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 2.1).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" /><path d="${d}" fill="none" stroke="#ffffff" stroke-width="${Math.max(1.2, el.width * 0.65).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" /></g>`;
+        case 'watercolor':
+          return `<g opacity="0.72"><path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 2.5).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.26" /><path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 1.4).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.35" /></g>`;
+        case 'pixel': {
+          const grid = Math.max(4, Math.round(el.width * 1.4));
+          const seen = new Set<string>();
+          const rects: string[] = [];
+          for (const p of el.points) {
+            const gx = Math.floor(p.x / grid) * grid;
+            const gy = Math.floor(p.y / grid) * grid;
+            const key = `${gx}:${gy}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              rects.push(`<rect x="${gx}" y="${gy}" width="${grid}" height="${grid}" fill="${color}" shape-rendering="crispEdges" />`);
+            }
+          }
+          return `<g shape-rendering="crispEdges">${rects.join('')}</g>`;
+        }
         case 'dots': {
           const step = Math.max(8, el.width * 2);
           const circles: string[] = [];
@@ -115,7 +149,6 @@ export function vectorElementsToSvgMarkup(elements: VectorStrokeElement[]): stri
           return `<g>${circles.join('')}</g>`;
         }
         case 'calligraphy': {
-          // Layered ribbons create tapered nib appearance cleanly in SVG
           const thin = `<path d="${d}" fill="none" stroke="${color}" stroke-width="${Math.max(1.5, el.width * 0.65).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" />`;
           const nibOffsetX = el.width * 0.28;
           const nibOffsetY = -el.width * 0.28;
@@ -210,6 +243,22 @@ export function renderVectorElementOnCanvas(
     ctx.lineTo(last.x, last.y);
   };
 
+  if (el.brush === 'pixel') {
+    const grid = Math.max(4, Math.round(el.width * 1.4));
+    const seen = new Set<string>();
+    for (const p of pts) {
+      const gx = Math.floor(p.x / grid) * grid;
+      const gy = Math.floor(p.y / grid) * grid;
+      const key = `${gx}:${gy}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        ctx.fillRect(gx, gy, grid, grid);
+      }
+    }
+    ctx.restore();
+    return;
+  }
+
   if (el.brush === 'dots') {
     const step = Math.max(8, el.width * 2);
     const radius = Math.max(1.5, el.width * 0.6);
@@ -226,6 +275,56 @@ export function renderVectorElementOnCanvas(
         acc = 0;
       }
     }
+    ctx.restore();
+    return;
+  }
+
+  if (el.brush === 'neon') {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = el.color;
+    ctx.shadowBlur = el.width * 2.6;
+    ctx.lineWidth = el.width * 1.8;
+    traceSmooth(pts);
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(1.2, el.width * 0.65);
+    traceSmooth(pts);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if (el.brush === 'airbrush') {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = el.color;
+    ctx.shadowBlur = el.width * 2.2;
+    ctx.globalAlpha = 0.25;
+    ctx.lineWidth = el.width * 2.8;
+    traceSmooth(pts);
+    ctx.stroke();
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = el.width * 1.4;
+    traceSmooth(pts);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if (el.brush === 'watercolor') {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = el.width * 2.5;
+    traceSmooth(pts);
+    ctx.stroke();
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = el.width * 1.4;
+    traceSmooth(pts);
+    ctx.stroke();
     ctx.restore();
     return;
   }
@@ -360,7 +459,7 @@ export function parseVectorStopMotionCode(
     return { error: 'Stop-motion vector code is empty.' };
   }
 
-  // 1. Structured JSON format (written by AI or Vector Code editor)
+  // 1. Structured JSON format (v1 frames, v2 layers, or v3 storyboard + groups + audio)
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       type ParsedFrameItem =
@@ -372,23 +471,32 @@ export function parseVectorStopMotionCode(
             background?: string;
           };
       type ParsedSpecJson = {
+        format?: string;
         title?: string;
         fps?: number;
+        durationSec?: number;
         width?: number;
         height?: number;
         background?: string;
         loop?: boolean;
         pingPong?: boolean;
+        audio?: MathAudioTrackSpec;
         frames?: ParsedFrameItem[];
       };
 
       const parsed = JSON.parse(trimmed) as ParsedSpecJson | ParsedFrameItem[];
+      if (isStopMotionSceneV2(parsed)) {
+        return {
+          spec: compileStopMotionSceneV2(parsed, svgMarkupToDataUrl),
+        };
+      }
+
       const obj: ParsedSpecJson = Array.isArray(parsed)
         ? { frames: parsed }
         : parsed;
 
       if (!Array.isArray(obj.frames) || obj.frames.length === 0) {
-        return { error: 'JSON must contain a non-empty "frames" array.' };
+        return { error: 'JSON must contain a non-empty "frames" or "layers" array.' };
       }
 
       const width =
@@ -400,7 +508,7 @@ export function parseVectorStopMotionCode(
           ? obj.background
           : '#faf8f5';
       const fps =
-        typeof obj.fps === 'number' && obj.fps >= 1 && obj.fps <= 30
+        typeof obj.fps === 'number' && obj.fps >= 1 && obj.fps <= 60
           ? obj.fps
           : 10;
 
@@ -449,15 +557,25 @@ export function parseVectorStopMotionCode(
         };
       });
 
+      const totalHolds = frames.reduce((s, f) => s + Math.max(1, f.hold), 0);
+      const durationSec =
+        typeof obj.durationSec === 'number' && obj.durationSec > 0
+          ? obj.durationSec
+          : totalHolds / Math.max(1, fps);
+
       return {
         spec: {
           title: obj.title || 'Vector Stop Motion',
+          format: obj.format || 'stopmotion/v1',
           fps,
           width,
           height,
           background,
           loop: obj.loop !== false,
           pingPong: Boolean(obj.pingPong),
+          durationSec,
+          totalLogicalFrames: totalHolds,
+          audioSpec: obj.audio,
           frames,
         },
       };
@@ -475,7 +593,7 @@ export function parseVectorStopMotionCode(
   const svgMatches = trimmed.match(/<svg[\s\S]*?<\/svg>/gi);
   if (svgMatches && svgMatches.length > 0) {
     const fpsMatch = trimmed.match(/<!--\s*fps\s*:\s*(\d+)\s*-->/i);
-    const fps = fpsMatch ? Math.min(30, Math.max(1, Number(fpsMatch[1]))) : 10;
+    const fps = fpsMatch ? Math.min(60, Math.max(1, Number(fpsMatch[1]))) : 10;
     let width = 800;
     let height = 450;
 
@@ -497,6 +615,7 @@ export function parseVectorStopMotionCode(
       };
     });
 
+    const totalHolds = frames.reduce((s, f) => s + Math.max(1, f.hold), 0);
     return {
       spec: {
         title: 'Vector Stop Motion',
@@ -506,6 +625,8 @@ export function parseVectorStopMotionCode(
         background: '#faf8f5',
         loop: true,
         pingPong: false,
+        durationSec: totalHolds / Math.max(1, fps),
+        totalLogicalFrames: totalHolds,
         frames,
       },
     };
@@ -513,7 +634,7 @@ export function parseVectorStopMotionCode(
 
   return {
     error:
-      'Provide a JSON object with a "frames" array of SVG strings or multiple <svg>...</svg> frames.',
+      'Provide a JSON object with a "frames" or "layers" array, or multiple <svg>...</svg> frames.',
   };
 }
 
@@ -524,16 +645,21 @@ export function serializeFramesToStopMotionCode(
   height: number,
   background = '#faf8f5',
   pingPong = false,
-  title = 'Stop Motion Animation'
+  title = 'Stop Motion Animation',
+  audio?: unknown
 ): string {
+  const totalHolds = frames.reduce((s, f) => s + Math.max(1, f.hold || 1), 0);
   const payload = {
+    format: 'stopmotion/v3',
     title,
     fps,
+    durationSec: Number((totalHolds / Math.max(1, fps)).toFixed(3)),
     width,
     height,
     background,
     loop: true,
     pingPong,
+    ...(audio ? { audio } : {}),
     frames: frames.map((f) =>
       f.svgMarkup !== undefined
         ? {
@@ -555,14 +681,12 @@ export function serializeFramesToStopMotionCode(
 
 export const TACTILE_SVG_FILTERS_DEFS = `
 <defs>
-  <!-- 1. Procedural Noise (The "Organic" Look): Subtle semi-transparent random grain for physical plastic/dough -->
   <filter id="tactileOrganicNoise" x="-10%" y="-10%" width="120%" height="120%">
     <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" result="noise" />
     <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.16 0" result="subtleGrain" />
     <feComposite in="SourceGraphic" in2="subtleGrain" operator="over" />
   </filter>
 
-  <!-- 2. SVG Filters (The "Pro" Look): Gaussian Blur + Turbulence Displacement Maps for Lumpy Real-World Dough -->
   <filter id="tactileDoughWarp" x="-25%" y="-25%" width="150%" height="150%">
     <feTurbulence type="fractalNoise" baseFrequency="0.038" numOctaves="3" result="roughNoise" />
     <feDisplacementMap in="SourceGraphic" in2="roughNoise" scale="9.5" xChannelSelector="R" yChannelSelector="G" result="warpedDough" />
@@ -574,12 +698,10 @@ export const TACTILE_SVG_FILTERS_DEFS = `
     <feComposite in="softDough" in2="specularClay" operator="arithmetic" k1="0" k2="1" k3="0.4" k4="0" />
   </filter>
 
-  <!-- Soft Gaussian Blur Filter for Tactile Edges -->
   <filter id="tactileSoftEdge">
     <feGaussianBlur stdDeviation="1.5" />
   </filter>
 
-  <!-- The Donut Trick: Off-center radial gradient for wet, liquid glaze look -->
   <radialGradient id="wetGlazePink" cx="34%" cy="28%" r="66%" fx="30%" fy="22%">
     <stop offset="0%" stop-color="#fbcfe8" stop-opacity="0.96" />
     <stop offset="25%" stop-color="#f43f5e" stop-opacity="0.92" />
@@ -603,10 +725,6 @@ export const TACTILE_SVG_FILTERS_DEFS = `
 </defs>
 `;
 
-/**
- * Procedural Generator: Creates 120 high-fidelity stop-motion frames with procedural noise,
- * canvas/SVG specular highlights (The Marker Trick), and displacement maps (The Dough Look).
- */
 export function generateProcedural120Frames(
   theme: 'dough-ball' | 'wet-donut' | 'tactile-flame' | 'glossy-marker' | 'cosmic-vortex',
   width: number,
@@ -680,7 +798,6 @@ export function generateProcedural120Frames(
         </g>
       `;
     } else {
-      // cosmic vortex
       const vortexAngle = t * 360;
       markup = `
         ${TACTILE_SVG_FILTERS_DEFS}

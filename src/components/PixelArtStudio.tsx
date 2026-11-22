@@ -43,6 +43,8 @@ import {
   PixelArtFrame,
   PixelArtSpec,
   PixelArtTool,
+  PixelShaderSpec,
+  PixelShaderType,
   SymmetryMode,
 } from '../types/pixelArt';
 import { ChatAttachment } from '../types/chat';
@@ -54,6 +56,7 @@ import {
 } from '../utils/pixelArtPalettes';
 import { PIXEL_ART_DEMOS } from '../utils/pixelArtDemos';
 import {
+  applyPixelShaders,
   exportPixelArtGif,
   pixelArtToPngBlob,
   pixelArtToSvg,
@@ -75,6 +78,18 @@ const CANVAS_SIZE_PRESETS = [
   { w: 32, h: 32, label: '32×32 (Classic 16-bit)' },
   { w: 48, h: 48, label: '48×48 (Detailed)' },
   { w: 64, h: 64, label: '64×64 (Complex Scene)' },
+  { w: 128, h: 128, label: '128×128 (HD Sprite)' },
+  { w: 256, h: 256, label: '256×256 (Mega Canvas)' },
+  { w: 512, h: 512, label: '512×512 (Ultra 512)' },
+];
+
+const SHADER_PRESETS: Array<{ id: PixelShaderType; label: string }> = [
+  { id: 'vignette', label: 'Vignette' },
+  { id: 'scanline', label: 'Scanlines' },
+  { id: 'crt', label: 'CRT' },
+  { id: 'chromatic', label: 'Chromatic' },
+  { id: 'glow', label: 'Glow' },
+  { id: 'posterize', label: 'Posterize' },
 ];
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -125,9 +140,10 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
   const [secondaryColor, setSecondaryColor] = useState<string>('#06b6d4');
   const [recentColors, setRecentColors] = useState<string[]>([]);
 
-  // Canvas Viewport Options
+  // Canvas Viewport Options & v3 Shaders
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [zoomLevel, setZoomLevel] = useState<number>(12);
+  const [activeShaders, setActiveShaders] = useState<PixelShaderSpec[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // Two Studio Menus
@@ -194,8 +210,19 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
     setFrames(externalSpec.frames);
     setFps(externalSpec.fps || 8);
     setProjectTitle(externalSpec.title || 'AI Pixel Art');
+    setActiveShaders(externalSpec.shaders || []);
     setActiveDemoId('');
     setSelectedFrameIndex(0);
+    setShowGrid(externalSpec.width < 128);
+    setZoomLevel(
+      externalSpec.width >= 256
+        ? 1
+        : externalSpec.width >= 128
+        ? 2
+        : externalSpec.width >= 64
+        ? 5
+        : 12
+    );
     undoStackRef.current = [];
     redoStackRef.current = [];
     setCanUndo(false);
@@ -256,9 +283,16 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
 
   const redrawCanvas = useCallback(() => {
     if (!currentFrame || !canvasRef.current) return;
+    const displayFrame: PixelArtFrame =
+      activeShaders.length > 0
+        ? {
+            ...currentFrame,
+            pixels: applyPixelShaders(currentFrame.pixels, width, height, activeShaders),
+          }
+        : currentFrame;
     const dest = canvasRef.current;
     const rendered = renderPixelArtToCanvas(
-      currentFrame,
+      displayFrame,
       width,
       height,
       zoomLevel,
@@ -275,7 +309,8 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
 
     if (previewCanvasRef.current) {
       const pDest = previewCanvasRef.current;
-      const pRendered = renderPixelArtToCanvas(currentFrame, width, height, 2, false);
+      const miniScale = width >= 256 ? 0.25 : width >= 128 ? 0.5 : 2;
+      const pRendered = renderPixelArtToCanvas(displayFrame, width, height, miniScale, false);
       pDest.width = pRendered.width;
       pDest.height = pRendered.height;
       const pCtx = pDest.getContext('2d');
@@ -285,7 +320,7 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
         pCtx.drawImage(pRendered, 0, 0);
       }
     }
-  }, [currentFrame, width, height, zoomLevel, showGrid]);
+  }, [currentFrame, width, height, zoomLevel, showGrid, activeShaders]);
 
   useEffect(() => {
     redrawCanvas();
@@ -739,6 +774,8 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
     pushUndoSnapshot();
     setWidth(presetW);
     setHeight(presetH);
+    setShowGrid(presetW < 128);
+    setZoomLevel(presetW >= 256 ? 1 : presetW >= 128 ? 2 : presetW >= 64 ? 5 : 12);
     setFrames([
       {
         id: crypto.randomUUID(),
@@ -752,16 +789,26 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
     showTempStatus(`Canvas set to ${presetW}×${presetH}.`);
   };
 
+  const toggleShader = (type: PixelShaderType) => {
+    setActiveShaders((prev) =>
+      prev.some((s) => s.type === type)
+        ? prev.filter((s) => s.type !== type)
+        : [...prev, { type, intensity: 0.5 }]
+    );
+  };
+
   // Render & Export actions
   const handlePostLiveRenderToChat = () => {
     if (!currentFrame) return;
     setExportMenuOpen(false);
     const spec: PixelArtSpec = {
+      format: 'pixelart/v3',
       title: projectTitle,
       width,
       height,
       fps,
       loop: loopPlayback,
+      ...(activeShaders.length > 0 ? { shaders: activeShaders } : {}),
       frames,
     };
     const code = serializePixelArtSpec(spec);
@@ -841,11 +888,13 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
   const handleCopyJsonCode = async () => {
     setExportMenuOpen(false);
     const spec: PixelArtSpec = {
+      format: 'pixelart/v3',
       title: projectTitle,
       width,
       height,
       fps,
       loop: loopPlayback,
+      ...(activeShaders.length > 0 ? { shaders: activeShaders } : {}),
       frames,
     };
     const code = serializePixelArtSpec(spec);
@@ -1377,8 +1426,8 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
             <div className="inline-flex items-center rounded-md bg-neutral-200/80 dark:bg-[#262626] p-0.5">
               <button
                 type="button"
-                onClick={() => setZoomLevel((z) => Math.max(4, z - 2))}
-                disabled={zoomLevel <= 4}
+                onClick={() => setZoomLevel((z) => Math.max(1, z - (z <= 4 ? 1 : 2)))}
+                disabled={zoomLevel <= 1}
                 className="w-6 h-6 inline-flex items-center justify-center rounded text-neutral-600 dark:text-neutral-300 hover:bg-white dark:hover:bg-white/10 disabled:opacity-40"
               >
                 <ZoomOut className="w-3.5 h-3.5" />
@@ -1388,12 +1437,34 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
               </span>
               <button
                 type="button"
-                onClick={() => setZoomLevel((z) => Math.min(32, z + 2))}
+                onClick={() => setZoomLevel((z) => Math.min(32, z + (z < 4 ? 1 : 2)))}
                 disabled={zoomLevel >= 32}
                 className="w-6 h-6 inline-flex items-center justify-center rounded text-neutral-600 dark:text-neutral-300 hover:bg-white dark:hover:bg-white/10 disabled:opacity-40"
               >
                 <ZoomIn className="w-3.5 h-3.5" />
               </button>
+            </div>
+
+            {/* Post Shaders Toggle Chips */}
+            <div className="hidden md:flex items-center gap-1 pl-2 border-l border-neutral-300 dark:border-white/10">
+              {SHADER_PRESETS.map((sh) => {
+                const active = activeShaders.some((s) => s.type === sh.id);
+                return (
+                  <button
+                    key={sh.id}
+                    type="button"
+                    onClick={() => toggleShader(sh.id)}
+                    aria-pressed={active}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                      active
+                        ? 'bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d]'
+                        : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200/70 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    {sh.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 

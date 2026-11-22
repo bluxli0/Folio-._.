@@ -19,13 +19,13 @@ interface SafetyFiltersModalProps {
 }
 
 const LEVEL_INDEX: Record<SafetyLevel, number> = {
-  max: 0,
-  medium: 1,
-  low: 2,
-  none: 3,
+  none: 0,
+  low: 1,
+  medium: 2,
+  max: 3,
 };
 
-const INDEX_TO_LEVEL: SafetyLevel[] = ['max', 'medium', 'low', 'none'];
+const INDEX_TO_LEVEL: SafetyLevel[] = ['none', 'low', 'medium', 'max'];
 
 export const SafetyFiltersModal: React.FC<SafetyFiltersModalProps> = ({
   isOpen,
@@ -91,7 +91,7 @@ export const SafetyFiltersModal: React.FC<SafetyFiltersModalProps> = ({
                 Safety filters
               </h2>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                Adjust blocking thresholds from Max to None for this chat.
+                Adjust blocking thresholds from None to Max for this chat.
               </p>
             </div>
           </div>

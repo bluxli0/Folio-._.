@@ -1,0 +1,159 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated Folio user account profile and display preferences",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Authentication user UID",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified account email",
+          "maxLength": 254
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Profile avatar URL",
+          "maxLength": 1024
+        },
+        "fontPreset": {
+          "type": "string",
+          "enum": ["studio-sans", "geometric-outfit", "editorial-serif", "technical-mono"],
+          "description": "Preferred UI typography preset"
+        },
+        "defaultPureCode": {
+          "type": "boolean",
+          "description": "Default immersive pure-code response mode toggle"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": ["uid", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "CustomInstructionProfile": {
+      "title": "CustomInstructionProfile",
+      "description": "Reusable named custom instruction preset created by the user",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "ownerId", "name", "instruction", "createdAt", "updatedAt"]
+    },
+    "CustomFunctionTool": {
+      "title": "CustomFunctionTool",
+      "description": "User-defined callable function schema and handler registered in Folio",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "parametersJson": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "handlerCode": {
+          "type": "string",
+          "maxLength": 16000
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "ownerId", "name", "description", "parametersJson", "handlerCode", "enabled", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Private user account profile containing PII isolated strictly to the owning verified user."
+    },
+    "/users/{userId}/instructions/{instructionId}": {
+      "schema": {
+        "$ref": "#/entities/CustomInstructionProfile"
+      },
+      "description": "User-owned reusable custom instruction presets."
+    },
+    "/users/{userId}/tools/{toolId}": {
+      "schema": {
+        "$ref": "#/entities/CustomFunctionTool"
+      },
+      "description": "User-owned custom function calling schemas and environment handlers."
+    }
+  }
+}

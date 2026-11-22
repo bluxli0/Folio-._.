@@ -1,3 +1,5 @@
+import type { MathAudioTrackSpec } from '../utils/mathAudioSynth';
+
 export type CaptureSourceMode = 'draw' | 'camera' | 'vector' | 'import';
 
 export type VectorBrushStyle =
@@ -6,7 +8,11 @@ export type VectorBrushStyle =
   | 'marker'
   | 'highlighter'
   | 'dashed'
-  | 'dots';
+  | 'dots'
+  | 'airbrush'
+  | 'neon'
+  | 'watercolor'
+  | 'pixel';
 
 export type DrawTool =
   | VectorBrushStyle
@@ -54,12 +60,17 @@ export interface StopMotionFrame {
 
 export interface VectorStopMotionSpec {
   title?: string;
+  format?: string;
   fps: number;
   width: number;
   height: number;
   background: string;
   loop: boolean;
   pingPong: boolean;
+  durationSec?: number;
+  totalLogicalFrames?: number;
+  sourceScene?: unknown;
+  audioSpec?: MathAudioTrackSpec;
   frames: StopMotionFrame[];
 }
 

@@ -17,6 +17,7 @@ export const InlineThreeJsViewer: React.FC<InlineThreeJsViewerProps> = ({
   const parsed = useMemo(() => parseThreeDCode(code), [code]);
   const spec = parsed.spec;
   const [iframeKey, setIframeKey] = useState<number>(0);
+  const srcDoc = useMemo(() => (spec ? buildThreeJsHtml(spec) : ''), [spec]);
 
   if (!spec) {
     return (
@@ -26,25 +27,52 @@ export const InlineThreeJsViewer: React.FC<InlineThreeJsViewerProps> = ({
     );
   }
 
-  const srcDoc = useMemo(() => buildThreeJsHtml(spec), [spec]);
-
   const handleDownloadSnapshot = () => {
-    try {
-      const iframe = document.getElementById(`three-iframe-${iframeKey}`) as HTMLIFrameElement;
-      if (!iframe || !iframe.contentWindow) return;
-      const canvas = iframe.contentWindow.document.querySelector('canvas');
-      if (!canvas) return;
-      const dataUrl = canvas.toDataURL('image/png');
+    const iframe = document.getElementById(`three-iframe-${iframeKey}`) as HTMLIFrameElement | null;
+    if (!iframe || !iframe.contentWindow) return;
+
+    const triggerDownload = (dataUrl: string) => {
       const a = document.createElement('a');
       a.href = dataUrl;
       a.download = '3d-scene-snapshot.png';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+    };
+
+    try {
+      const canvas = iframe.contentWindow.document.querySelector('canvas');
+      if (canvas) {
+        triggerDownload(canvas.toDataURL('image/png'));
+        return;
+      }
     } catch {
-      // Cross-origin or canvas tainted
+      // Expected for sandbox="allow-scripts" opaque origin; use postMessage
     }
+
+    const requestId = `snap-${Date.now()}-${Math.random()}`;
+    const onMessage = (ev: MessageEvent) => {
+      if (
+        ev.data &&
+        ev.data.type === 'folio-three-snapshot-data' &&
+        ev.data.requestId === requestId &&
+        typeof ev.data.dataUrl === 'string'
+      ) {
+        window.removeEventListener('message', onMessage);
+        triggerDownload(ev.data.dataUrl);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    setTimeout(() => window.removeEventListener('message', onMessage), 2500);
+    iframe.contentWindow.postMessage({ type: 'folio-three-snapshot-request', requestId }, '*');
   };
+
+  const bbElements = Array.isArray((spec.bbmodel as { elements?: unknown[] } | undefined)?.elements)
+    ? ((spec.bbmodel as { elements?: unknown[] }).elements?.length ?? 0)
+    : 0;
+  const voxelCount = spec.voxels?.length || 0;
+  const partCount = bbElements || voxelCount || spec.objects?.length || 0;
+  const partLabel = bbElements ? 'cubes' : voxelCount ? 'voxels' : 'objects';
 
   return (
     <div className="border-t border-neutral-200 dark:border-white/10 bg-[#f9f9f9] dark:bg-[#161616] text-[#0d0d0d] dark:text-[#ececec]">
@@ -56,7 +84,9 @@ export const InlineThreeJsViewer: React.FC<InlineThreeJsViewerProps> = ({
             {spec.title || 'Three.js 3D Scene'}
           </span>
           <span aria-hidden="true">·</span>
-          <span>{spec.objects?.length || 0} objects</span>
+          <span>
+            {partCount} {partLabel}
+          </span>
         </div>
 
         <div className="flex items-center gap-1">

@@ -18,6 +18,7 @@ import {
   Layers,
   MessageSquarePlus,
   Minus,
+  Music,
   Pause,
   Pencil,
   Play,
@@ -26,12 +27,15 @@ import {
   Repeat,
   RotateCcw,
   Send,
+  Server,
   SkipBack,
   SkipForward,
+  SlidersHorizontal,
   Sparkles,
   Square,
   Trash2,
   Upload,
+  Volume2,
   X,
 } from 'lucide-react';
 import {
@@ -47,14 +51,18 @@ import {
 } from '../types/stopMotion';
 import { ChatAttachment } from '../types/chat';
 import {
+  bakeServerVideoViaFfmpeg,
   blobToBase64,
   createStarterStopMotionFrames,
   drawCoverOrContain,
   expandPlaybackSequence,
   exportAnimatedGif,
   exportSpriteSheetPng,
+  exportStopMotionJson,
+  exportStopMotionXml,
   exportWebmVideo,
   loadImageElement,
+  stitchServerVideosViaFfmpeg,
 } from '../utils/stopMotionExport';
 import { STOP_MOTION_DEMOS } from '../utils/stopMotionDemos';
 import {
@@ -67,6 +75,18 @@ import {
   VECTOR_BRUSH_META,
   vectorElementsToSvgMarkup,
 } from '../utils/vectorBrushes';
+import {
+  evaluateStopMotionFidelity,
+  isStopMotionSceneV2,
+  recompileStopMotionAtFps,
+  StopMotionSceneV2,
+} from '../utils/stopMotionEngine';
+import {
+  createAudioBufferFromMathSpec,
+  MATH_AUDIO_PRESETS,
+  MathAudioTrackSpec,
+  synthesizeMathAudioWavBlob,
+} from '../utils/mathAudioSynth';
 
 interface StopMotionPanelProps {
   externalSpec?: VectorStopMotionSpec | null;
@@ -96,7 +116,7 @@ const PAPER_COLORS = [
 ];
 
 const BRUSH_SIZES = [3, 6, 12, 22];
-const FPS_PRESETS = [6, 10, 12, 24];
+const FPS_PRESETS = [6, 12, 24, 30, 60];
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -127,12 +147,15 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [sourceMode, setSourceMode] = useState<CaptureSourceMode>('draw');
 
-  // Playback & FPS state
+  // Playback & FPS state (v3 duration-preserving engine)
   const [isPlaying, setIsPlaying] = useState(false);
   const [playIndex, setPlayIndex] = useState(0);
   const [fps, setFps] = useState(STOP_MOTION_DEMOS[0].fps);
   const [loopPlayback, setLoopPlayback] = useState(true);
   const [pingPong, setPingPong] = useState(STOP_MOTION_DEMOS[0].pingPong);
+  const [durationSecOverride, setDurationSecOverride] = useState<number | null>(null);
+  const [totalLogicalFramesOverride, setTotalLogicalFramesOverride] = useState<number | null>(null);
+  const [conserveDuration, setConserveDuration] = useState(true);
 
   // Onion skin & guides
   const [onionEnabled, setOnionEnabled] = useState(true);
@@ -148,6 +171,16 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
   const [editingFrameId, setEditingFrameId] = useState<string | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [vectorStrokeCount, setVectorStrokeCount] = useState(0);
+
+  // Production v3 drawer: Pure-Math Audio + Server Bake + CI/CD Clip Stitcher
+  const [productionOpen, setProductionOpen] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioPreset, setAudioPreset] = useState<NonNullable<MathAudioTrackSpec['preset']>>('chime');
+  const [audioFormula, setAudioFormula] = useState<string>(MATH_AUDIO_PRESETS.chime.formula);
+  const [bakeProgressText, setBakeProgressText] = useState<string | null>(null);
+  const [stitchQueue, setStitchQueue] = useState<
+    Array<{ id: string; label: string; blob: Blob; repeatCount: number }>
+  >([]);
 
   // Vector code editor state
   const [vectorCodeDraft, setVectorCodeDraft] = useState(() =>
@@ -176,7 +209,7 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
   const [shutterFlash, setShutterFlash] = useState(false);
 
   // Export & status feedback
-  const [isExporting, setIsExporting] = useState<'gif' | 'webm' | 'sheet' | 'chat' | null>(null);
+  const [isExporting, setIsExporting] = useState<'gif' | 'webm' | 'sheet' | 'chat' | 'bake' | 'stitch' | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const drawCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -185,6 +218,8 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
   const importInputRef = useRef<HTMLInputElement>(null);
   const demosMenuRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const sourceSceneRef = useRef<StopMotionSceneV2 | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   // Vector drawing & undo refs
   const vectorElementsRef = useRef<VectorStrokeElement[]>([]);
@@ -236,25 +271,37 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
   useEffect(() => {
     if (!externalSpec) return;
     setIsPlaying(false);
+    sourceSceneRef.current = isStopMotionSceneV2(externalSpec.sourceScene)
+      ? externalSpec.sourceScene
+      : null;
     setFrames(externalSpec.frames);
     setFps(externalSpec.fps);
     setLoopPlayback(externalSpec.loop);
     setPingPong(externalSpec.pingPong);
+    setDurationSecOverride(externalSpec.durationSec ?? null);
+    setTotalLogicalFramesOverride(externalSpec.totalLogicalFrames ?? null);
+    if (externalSpec.audioSpec) {
+      setAudioEnabled(true);
+      if (externalSpec.audioSpec.preset) setAudioPreset(externalSpec.audioSpec.preset);
+      if (externalSpec.audioSpec.formula) setAudioFormula(externalSpec.audioSpec.formula);
+    }
     setPaperColor(externalSpec.background || '#faf8f5');
     setProjectTitle(externalSpec.title || 'AI Vector Animation');
     setActiveDemoId('');
     setSelectedIndex(0);
     setEditingFrameId(null);
     setVectorCodeDraft(
-      serializeFramesToStopMotionCode(
-        externalSpec.frames,
-        externalSpec.fps,
-        externalSpec.width,
-        externalSpec.height,
-        externalSpec.background,
-        externalSpec.pingPong,
-        externalSpec.title || 'AI Vector Animation'
-      )
+      externalSpec.sourceScene
+        ? JSON.stringify(externalSpec.sourceScene, null, 2)
+        : serializeFramesToStopMotionCode(
+            externalSpec.frames,
+            externalSpec.fps,
+            externalSpec.width,
+            externalSpec.height,
+            externalSpec.background,
+            externalSpec.pingPong,
+            externalSpec.title || 'AI Vector Animation'
+          )
     );
     setVectorCodeError(null);
     setSourceMode('vector');
@@ -267,9 +314,59 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     [frames]
   );
   const totalSeconds = useMemo(
-    () => (totalUnits / Math.max(1, fps)).toFixed(1),
-    [totalUnits, fps]
+    () => (durationSecOverride ?? totalUnits / Math.max(1, fps)).toFixed(1),
+    [durationSecOverride, totalUnits, fps]
   );
+  const effectivePlayFps = useMemo(() => {
+    if (
+      totalLogicalFramesOverride &&
+      totalLogicalFramesOverride > frames.length &&
+      durationSecOverride &&
+      durationSecOverride > 0
+    ) {
+      return Math.max(1, frames.length / durationSecOverride);
+    }
+    if (conserveDuration && durationSecOverride && durationSecOverride > 0 && frames.length > 0 && !sourceSceneRef.current) {
+      return Math.max(1, totalUnits / durationSecOverride);
+    }
+    return fps;
+  }, [totalLogicalFramesOverride, frames.length, durationSecOverride, conserveDuration, totalUnits, fps]);
+
+  const activeAudioSpec = useMemo<MathAudioTrackSpec | undefined>(() => {
+    if (!audioEnabled) return undefined;
+    return {
+      mode: 'math',
+      preset: audioPreset,
+      formula: audioFormula,
+      durationSec: Number(totalSeconds) || 3,
+      gain: 0.72,
+    };
+  }, [audioEnabled, audioPreset, audioFormula, totalSeconds]);
+
+  const handleFpsChange = (nextFps: number) => {
+    const clampedFps = Math.max(1, Math.min(60, Math.round(nextFps)));
+    setFps(clampedFps);
+
+    if (sourceSceneRef.current) {
+      const recompiled = recompileStopMotionAtFps(
+        sourceSceneRef.current,
+        clampedFps,
+        svgMarkupToDataUrl
+      );
+      setFrames(recompiled.frames);
+      setDurationSecOverride(recompiled.durationSec ?? null);
+      setTotalLogicalFramesOverride(recompiled.totalLogicalFrames ?? null);
+      setSelectedIndex(0);
+      showTempStatus(
+        `Recompiled ${recompiled.totalLogicalFrames?.toLocaleString() || recompiled.frames.length}f @ ${clampedFps}fps (${(recompiled.durationSec ?? 0).toFixed(1)}s locked).`
+      );
+    } else if (conserveDuration && frames.length > 0) {
+      if (!durationSecOverride) {
+        setDurationSecOverride(totalUnits / Math.max(1, fps));
+      }
+      showTempStatus(`FPS set to ${clampedFps} (runtime locked at ${totalSeconds}s).`);
+    }
+  };
 
   // Keep selectedIndex in bounds
   useEffect(() => {
@@ -281,7 +378,7 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     }
   }, [frames.length, selectedIndex]);
 
-  // Playback scheduler respecting per-frame hold counts & ping-pong
+  // Smooth requestAnimationFrame playback scheduler respecting per-frame hold counts & ping-pong
   useEffect(() => {
     if (!isPlaying || frames.length === 0) return;
 
@@ -292,38 +389,48 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     }
 
     let step = 0;
-    let timerId: number | null = null;
-    let cancelled = false;
+    setPlayIndex(seq[0] ?? 0);
 
-    const tick = () => {
-      if (cancelled) return;
+    let rafId = 0;
+    let lastTime = performance.now();
+    let elapsed = 0;
+
+    const stepLoop = (now: number) => {
+      const dt = Math.min(100, Math.max(0, now - lastTime));
+      lastTime = now;
+      elapsed += dt;
+
       const frameIdx = seq[step] ?? 0;
-      setPlayIndex(frameIdx);
       const frame = frames[frameIdx];
-      const delay = Math.max(25, Math.round((1000 / Math.max(1, fps)) * (frame?.hold || 1)));
+      const targetDuration = Math.max(
+        16,
+        (1000 / Math.max(1, effectivePlayFps)) * Math.max(1, frame?.hold || 1)
+      );
 
-      timerId = window.setTimeout(() => {
-        if (cancelled) return;
+      if (elapsed >= targetDuration) {
+        elapsed %= targetDuration;
         if (step + 1 < seq.length) {
           step += 1;
-          tick();
+          setPlayIndex(seq[step] ?? 0);
         } else if (loopPlayback) {
           step = 0;
-          tick();
+          setPlayIndex(seq[0] ?? 0);
         } else {
           setIsPlaying(false);
           setSelectedIndex(frameIdx);
+          return;
         }
-      }, delay);
+      }
+
+      rafId = window.requestAnimationFrame(stepLoop);
     };
 
-    tick();
+    rafId = window.requestAnimationFrame(stepLoop);
 
     return () => {
-      cancelled = true;
-      if (timerId !== null) window.clearTimeout(timerId);
+      window.cancelAnimationFrame(rafId);
     };
-  }, [isPlaying, frames, fps, loopPlayback, pingPong]);
+  }, [isPlaying, frames, effectivePlayFps, loopPlayback, pingPong]);
 
   // Camera stream management
   const stopCamera = useCallback(() => {
@@ -830,10 +937,13 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     }
   };
 
-  // Load any of the 10 curated vector demos
+  // Load any of the curated vector demos
   const handleSelectDemo = (demo: StopMotionDemo) => {
     setDemosMenuOpen(false);
     setIsPlaying(false);
+    sourceSceneRef.current = null;
+    setDurationSecOverride(null);
+    setTotalLogicalFramesOverride(null);
     const builtFrames = demo.buildFrames(dimensions.width, dimensions.height);
     setFrames(builtFrames);
     setFps(demo.fps);
@@ -868,8 +978,18 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     }
     setVectorCodeError(null);
     setIsPlaying(false);
+    sourceSceneRef.current = isStopMotionSceneV2(res.spec.sourceScene)
+      ? res.spec.sourceScene
+      : null;
     setFrames(res.spec.frames);
     setFps(res.spec.fps);
+    setDurationSecOverride(res.spec.durationSec ?? null);
+    setTotalLogicalFramesOverride(res.spec.totalLogicalFrames ?? null);
+    if (res.spec.audioSpec) {
+      setAudioEnabled(true);
+      if (res.spec.audioSpec.preset) setAudioPreset(res.spec.audioSpec.preset);
+      if (res.spec.audioSpec.formula) setAudioFormula(res.spec.audioSpec.formula);
+    }
     setLoopPlayback(res.spec.loop);
     setPingPong(res.spec.pingPong);
     setPaperColor(res.spec.background);
@@ -877,19 +997,24 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     setActiveDemoId('');
     setSelectedIndex(0);
     setEditingFrameId(null);
-    showTempStatus(`Compiled ${res.spec.frames.length} vector frames.`);
+    showTempStatus(
+      `Compiled ${(res.spec.totalLogicalFrames ?? res.spec.frames.length).toLocaleString()} frames (${res.spec.durationSec?.toFixed(1) || totalSeconds}s).`
+    );
   };
 
   const handleSyncVectorCodeFromTimeline = () => {
-    const serialized = serializeFramesToStopMotionCode(
-      frames,
-      fps,
-      dimensions.width,
-      dimensions.height,
-      paperColor,
-      pingPong,
-      projectTitle
-    );
+    const serialized = sourceSceneRef.current
+      ? JSON.stringify({ ...sourceSceneRef.current, fps }, null, 2)
+      : serializeFramesToStopMotionCode(
+          frames,
+          fps,
+          dimensions.width,
+          dimensions.height,
+          paperColor,
+          pingPong,
+          projectTitle,
+          activeAudioSpec
+        );
     setVectorCodeDraft(serialized);
     setVectorCodeError(null);
     showTempStatus('Synced vector JSON from timeline.');
@@ -939,16 +1064,19 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
   const handlePostRenderToChat = () => {
     if (frames.length === 0) return;
     setExportMenuOpen(false);
-    const code = serializeFramesToStopMotionCode(
-      frames,
-      fps,
-      dimensions.width,
-      dimensions.height,
-      paperColor,
-      pingPong,
-      projectTitle
-    );
-    const md = `**${projectTitle}** · ${frames.length} frames · ${fps} fps\n\n\`\`\`stopmotion\n${code}\n\`\`\``;
+    const code = sourceSceneRef.current
+      ? JSON.stringify({ ...sourceSceneRef.current, fps, ...(activeAudioSpec ? { audio: activeAudioSpec } : {}) }, null, 2)
+      : serializeFramesToStopMotionCode(
+          frames,
+          fps,
+          dimensions.width,
+          dimensions.height,
+          paperColor,
+          pingPong,
+          projectTitle,
+          activeAudioSpec
+        );
+    const md = `**${projectTitle}** · ${totalLogicalFramesOverride ?? frames.length} frames · ${fps} fps\n\n\`\`\`stopmotion\n${code}\n\`\`\``;
     onPostToChat(md);
     showTempStatus('Rendered animation into chat.');
   };
@@ -956,21 +1084,56 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
   const handleCopyVectorCode = async () => {
     if (frames.length === 0) return;
     setExportMenuOpen(false);
-    const code = serializeFramesToStopMotionCode(
-      frames,
-      fps,
-      dimensions.width,
-      dimensions.height,
-      paperColor,
-      pingPong,
-      projectTitle
-    );
+    const code = sourceSceneRef.current
+      ? JSON.stringify({ ...sourceSceneRef.current, fps, ...(activeAudioSpec ? { audio: activeAudioSpec } : {}) }, null, 2)
+      : serializeFramesToStopMotionCode(
+          frames,
+          fps,
+          dimensions.width,
+          dimensions.height,
+          paperColor,
+          pingPong,
+          projectTitle,
+          activeAudioSpec
+        );
     try {
       await navigator.clipboard.writeText(code);
       showTempStatus('Copied vector JSON code.');
     } catch {
       showTempStatus('Clipboard unavailable.');
     }
+  };
+
+  const currentSpecSnapshot = useCallback((): VectorStopMotionSpec => ({
+    format: 'stopmotion/v3',
+    title: projectTitle,
+    fps,
+    width: dimensions.width,
+    height: dimensions.height,
+    background: paperColor,
+    loop: loopPlayback,
+    pingPong,
+    durationSec: durationSecOverride ?? totalUnits / Math.max(1, fps),
+    totalLogicalFrames: totalLogicalFramesOverride ?? totalUnits,
+    sourceScene: sourceSceneRef.current ?? undefined,
+    audioSpec: activeAudioSpec,
+    frames,
+  }), [projectTitle, fps, dimensions, paperColor, loopPlayback, pingPong, durationSecOverride, totalUnits, totalLogicalFramesOverride, activeAudioSpec, frames]);
+
+  const handleExportXml = () => {
+    if (frames.length === 0) return;
+    setExportMenuOpen(false);
+    const xml = exportStopMotionXml(currentSpecSnapshot());
+    downloadBlob(new Blob([xml], { type: 'application/xml;charset=utf-8' }), 'stop-motion-v3.xml');
+    showTempStatus('Exported Stop Motion XML.');
+  };
+
+  const handleExportJson = () => {
+    if (frames.length === 0) return;
+    setExportMenuOpen(false);
+    const json = exportStopMotionJson(currentSpecSnapshot());
+    downloadBlob(new Blob([json], { type: 'application/json;charset=utf-8' }), 'stop-motion-v3.json');
+    showTempStatus('Exported Stop Motion JSON.');
   };
 
   // Exports & Send GIF to Composer
@@ -981,7 +1144,7 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     try {
       const blob = await exportAnimatedGif(
         frames,
-        fps,
+        effectivePlayFps,
         pingPong,
         dimensions.width,
         dimensions.height
@@ -1002,10 +1165,11 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     try {
       const blob = await exportWebmVideo(
         frames,
-        fps,
+        effectivePlayFps,
         pingPong,
         dimensions.width,
-        dimensions.height
+        dimensions.height,
+        activeAudioSpec
       );
       downloadBlob(blob, `stop-motion-${fps}fps.webm`);
       showTempStatus('Exported WebM video.');
@@ -1014,6 +1178,98 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
     } finally {
       setIsExporting(null);
     }
+  };
+
+  const handleServerBake = async (format: 'webm' | 'mp4', addToStitchQueue = false) => {
+    if (frames.length === 0 || isExporting) return;
+    setExportMenuOpen(false);
+    setIsExporting('bake');
+    setBakeProgressText('Starting FFmpeg...');
+    try {
+      const { blob } = await bakeServerVideoViaFfmpeg({
+        frames,
+        fps: effectivePlayFps,
+        pingPong,
+        width: dimensions.width,
+        height: dimensions.height,
+        format,
+        audioSpec: activeAudioSpec,
+        onProgress: (pct, msg) => setBakeProgressText(`${pct}% · ${msg}`),
+      });
+      if (addToStitchQueue) {
+        setStitchQueue((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            label: `${projectTitle} (${frames.length}f @ ${fps}fps)`,
+            blob,
+            repeatCount: 1,
+          },
+        ]);
+        showTempStatus(`Added baked ${format.toUpperCase()} clip to Stitch Queue.`);
+      } else {
+        downloadBlob(blob, `stop-motion-baked-${fps}fps.${format}`);
+        showTempStatus(`Baked ${format.toUpperCase()} via FFmpeg.`);
+      }
+    } catch (err) {
+      showTempStatus(err instanceof Error ? err.message : 'Server FFmpeg bake failed.');
+    } finally {
+      setIsExporting(null);
+      setTimeout(() => setBakeProgressText(null), 2000);
+    }
+  };
+
+  const handleStitchQueue = async () => {
+    if (stitchQueue.length === 0 || isExporting) return;
+    setIsExporting('stitch');
+    setBakeProgressText('Stitching long-form video via FFmpeg...');
+    try {
+      const { blob } = await stitchServerVideosViaFfmpeg({
+        clips: stitchQueue.map((c) => ({ blob: c.blob, repeatCount: c.repeatCount })),
+        format: 'webm',
+      });
+      downloadBlob(blob, 'stop-motion-stitched.webm');
+      showTempStatus('Stitched continuous WebM video.');
+    } catch (err) {
+      showTempStatus(err instanceof Error ? err.message : 'Stitch failed.');
+    } finally {
+      setIsExporting(null);
+      setTimeout(() => setBakeProgressText(null), 2000);
+    }
+  };
+
+  const handlePreviewMathAudio = () => {
+    if (typeof AudioContext === 'undefined') return;
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    const ctx = new AudioContext();
+    audioCtxRef.current = ctx;
+    const buf = createAudioBufferFromMathSpec(ctx, {
+      mode: 'math',
+      preset: audioPreset,
+      formula: audioFormula,
+      durationSec: Math.min(8, Number(totalSeconds) || 3),
+      gain: 0.72,
+    });
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start();
+    showTempStatus('Playing pure-math audio waveform...');
+  };
+
+  const handleDownloadWav = () => {
+    const blob = synthesizeMathAudioWavBlob({
+      mode: 'math',
+      preset: audioPreset,
+      formula: audioFormula,
+      durationSec: Number(totalSeconds) || 3,
+      gain: 0.75,
+    });
+    downloadBlob(blob, 'stop-motion-math-audio.wav');
+    showTempStatus('Downloaded WAV audio.');
   };
 
   const handleExportSpriteSheet = async () => {
@@ -1375,6 +1631,28 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
                   type="button"
                   role="menuitem"
                   disabled={frames.length === 0}
+                  onClick={() => void handleServerBake('webm')}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-left hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-40 transition-colors whitespace-nowrap"
+                >
+                  <Server className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-300 shrink-0" />
+                  <span>FFmpeg Bake WebM (60fps + Audio)</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={frames.length === 0}
+                  onClick={() => void handleServerBake('mp4')}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-left hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-40 transition-colors whitespace-nowrap"
+                >
+                  <Server className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-300 shrink-0" />
+                  <span>FFmpeg Bake MP4 (H.264)</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={frames.length === 0}
                   onClick={() => void handleExportSpriteSheet()}
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-left hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-40 transition-colors whitespace-nowrap"
                 >
@@ -1383,6 +1661,28 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
                 </button>
 
                 <div className="my-1 border-t border-neutral-200 dark:border-white/10" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={frames.length === 0}
+                  onClick={handleExportXml}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-left hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-40 transition-colors whitespace-nowrap"
+                >
+                  <Code2 className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-300 shrink-0" />
+                  <span>Export Stop Motion XML</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={frames.length === 0}
+                  onClick={handleExportJson}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium text-left hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-40 transition-colors whitespace-nowrap"
+                >
+                  <Download className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-300 shrink-0" />
+                  <span>Export Stop Motion JSON</span>
+                </button>
 
                 <button
                   type="button"
@@ -2015,14 +2315,14 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
           </div>
 
           {/* FPS Slider, Presets & Onion Skin */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <div className="inline-flex items-center gap-1.5">
               <div className="inline-flex items-center rounded-lg bg-neutral-200/80 dark:bg-[#262626] p-0.5">
                 {FPS_PRESETS.map((presetFps) => (
                   <button
                     key={presetFps}
                     type="button"
-                    onClick={() => setFps(presetFps)}
+                    onClick={() => handleFpsChange(presetFps)}
                     className={`px-1.5 py-0.5 rounded-md font-mono text-[11px] tabular-nums transition-colors ${
                       fps === presetFps
                         ? 'bg-white dark:bg-[#3c3c3c] text-[#0d0d0d] dark:text-white shadow-xs'
@@ -2037,10 +2337,10 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
                 <input
                   type="range"
                   min={2}
-                  max={24}
+                  max={60}
                   step={1}
                   value={fps}
-                  onChange={(e) => setFps(Number(e.target.value))}
+                  onChange={(e) => handleFpsChange(Number(e.target.value))}
                   aria-label="Frames per second"
                   className="w-16 accent-[#0d0d0d] dark:accent-white"
                 />
@@ -2048,6 +2348,19 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
                   {fps} fps
                 </span>
               </label>
+              <button
+                type="button"
+                onClick={() => setConserveDuration((v) => !v)}
+                aria-pressed={conserveDuration}
+                title="Lock animation duration in seconds when changing FPS"
+                className={`h-7 px-2 rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  conserveDuration
+                    ? 'bg-neutral-200 dark:bg-[#333333] text-[#0d0d0d] dark:text-white'
+                    : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200/60 dark:hover:bg-white/10'
+                }`}
+              >
+                {conserveDuration ? 'Duration Locked' : 'Variable Speed'}
+              </button>
             </div>
 
             <div className="inline-flex items-center gap-1.5">
@@ -2092,8 +2405,197 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
             >
               <Grid3X3 className="w-3.5 h-3.5" />
             </button>
+
+            <button
+              type="button"
+              onClick={() => setProductionOpen((v) => !v)}
+              aria-expanded={productionOpen}
+              className={`inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                productionOpen
+                  ? 'bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d]'
+                  : 'border border-neutral-200 dark:border-white/10 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200/60 dark:hover:bg-white/10'
+              }`}
+            >
+              <SlidersHorizontal className="w-3 h-3" />
+              <span>Production &amp; Audio</span>
+            </button>
           </div>
         </div>
+
+        {/* Collapsible Stop Motion v3 Production Drawer: Audio Math Synth + FFmpeg Bake + CI/CD Stitcher */}
+        {productionOpen && (
+          <div className="px-3 sm:px-4 py-3 border-b border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-[#141414] space-y-3 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Pure-Math Audio Waveform Synth */}
+              <div className="rounded-xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#1c1c1c] p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-medium text-[#0d0d0d] dark:text-white">
+                    <Music className="w-3.5 h-3.5" />
+                    <span>Pure-Math Audio Track</span>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={audioEnabled}
+                      onChange={(e) => setAudioEnabled(e.target.checked)}
+                      className="accent-[#0d0d0d] dark:accent-white"
+                    />
+                    <span className="text-[11px] text-neutral-600 dark:text-neutral-300">Mux to Export</span>
+                  </label>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <select
+                    value={audioPreset}
+                    onChange={(e) => {
+                      const next = e.target.value as NonNullable<MathAudioTrackSpec['preset']>;
+                      setAudioPreset(next);
+                      setAudioFormula(MATH_AUDIO_PRESETS[next].formula);
+                      setAudioEnabled(true);
+                    }}
+                    aria-label="Audio math waveform preset"
+                    className="h-7 rounded-lg border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#262626] px-2 text-[11px]"
+                  >
+                    {Object.entries(MATH_AUDIO_PRESETS).map(([key, item]) => (
+                      <option key={key} value={key}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={handlePreviewMathAudio}
+                    className="inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/10 text-[11px] whitespace-nowrap shrink-0"
+                  >
+                    <Volume2 className="w-3 h-3" />
+                    <span>Test Wave</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadWav}
+                    className="inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/10 text-[11px] whitespace-nowrap shrink-0"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>WAV</span>
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  value={audioFormula}
+                  onChange={(e) => {
+                    setAudioFormula(e.target.value);
+                    setAudioEnabled(true);
+                  }}
+                  spellCheck={false}
+                  aria-label="Audio math formula"
+                  placeholder="sin(TAU * 440 * t) * tanh(cos(PI * t))"
+                  className="w-full h-8 rounded-lg border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-[#111] px-2.5 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-neutral-400"
+                />
+              </div>
+
+              {/* FFmpeg Server Baker & Long-Form CI/CD Clip Stitcher */}
+              <div className="rounded-xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#1c1c1c] p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-medium text-[#0d0d0d] dark:text-white">
+                    <Server className="w-3.5 h-3.5" />
+                    <span>FFmpeg Bake &amp; 60m Stitcher</span>
+                  </div>
+                  {sourceSceneRef.current && (
+                    <span className="font-mono text-[11px] text-neutral-500">
+                      CoT Fidelity {evaluateStopMotionFidelity(sourceSceneRef.current).score}/100
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={frames.length === 0 || Boolean(isExporting)}
+                    onClick={() => void handleServerBake('webm', false)}
+                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] text-[11px] font-medium disabled:opacity-40 whitespace-nowrap shrink-0"
+                  >
+                    <Server className="w-3 h-3" />
+                    <span>Bake WebM</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={frames.length === 0 || Boolean(isExporting)}
+                    onClick={() => void handleServerBake('mp4', false)}
+                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/10 text-[11px] disabled:opacity-40 whitespace-nowrap shrink-0"
+                  >
+                    <Film className="w-3 h-3" />
+                    <span>Bake MP4</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={frames.length === 0 || Boolean(isExporting)}
+                    onClick={() => void handleServerBake('webm', true)}
+                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/10 text-[11px] disabled:opacity-40 whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Queue Clip ({stitchQueue.length})</span>
+                  </button>
+                  {stitchQueue.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={Boolean(isExporting)}
+                      onClick={() => void handleStitchQueue()}
+                      className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-emerald-600 text-white text-[11px] font-medium disabled:opacity-40 whitespace-nowrap shrink-0"
+                    >
+                      <Film className="w-3 h-3" />
+                      <span>Stitch Queue</span>
+                    </button>
+                  )}
+                </div>
+
+                {bakeProgressText && (
+                  <div className="font-mono text-[11px] text-blue-600 dark:text-blue-400">
+                    {bakeProgressText}
+                  </div>
+                )}
+
+                {stitchQueue.length > 0 && (
+                  <div className="space-y-1 max-h-20 overflow-y-auto chat-scroll">
+                    {stitchQueue.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between gap-2 text-[11px] bg-neutral-50 dark:bg-[#141414] px-2 py-1 rounded">
+                        <span className="truncate">{item.label}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <label className="inline-flex items-center gap-1 font-mono">
+                            <span>×</span>
+                            <input
+                              type="number"
+                              min={1}
+                              max={200}
+                              value={item.repeatCount}
+                              onChange={(e) => {
+                                const val = Math.max(1, Math.min(200, Number(e.target.value) || 1));
+                                setStitchQueue((q) =>
+                                  q.map((x) => (x.id === item.id ? { ...x, repeatCount: val } : x))
+                                );
+                              }}
+                              className="w-12 rounded border border-neutral-200 dark:border-white/10 bg-transparent px-1 text-center"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setStitchQueue((q) => q.filter((x) => x.id !== item.id))}
+                            aria-label="Remove queued clip"
+                            className="text-red-500 hover:opacity-80"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Clean Unboxed Timeline Metadata & Status */}
         <div className="px-3 sm:px-4 py-2 border-b border-neutral-200 dark:border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -2103,7 +2605,8 @@ export const StopMotionPanel: React.FC<StopMotionPanelProps> = ({
             </span>
             <span aria-hidden="true">·</span>
             <span>
-              {frames.length} {frames.length === 1 ? 'frame' : 'frames'}
+              {(totalLogicalFramesOverride ?? frames.length).toLocaleString()}{' '}
+              {(totalLogicalFramesOverride ?? frames.length) === 1 ? 'frame' : 'frames'}
             </span>
             <span aria-hidden="true">·</span>
             <span>{totalSeconds}s runtime</span>

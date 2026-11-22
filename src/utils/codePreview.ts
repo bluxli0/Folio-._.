@@ -22,8 +22,31 @@ export type PreviewCategory =
   | 'sandpack'
   | 'stopmotion'
   | 'pixelart'
+  | 'liquidmotion'
+  | 'liquiddrop'
+  | 'pixelmotion'
+  | 'motiondrop'
+  | 'evo'
   | 'simulated'
-  | 'threejs';
+  | 'threejs'
+  | 'chart'
+  | 'quiz';
+
+export function isMediaCodeCategory(category: PreviewCategory): boolean {
+  return (
+    category === 'stopmotion' ||
+    category === 'pixelart' ||
+    category === 'liquidmotion' ||
+    category === 'liquiddrop' ||
+    category === 'pixelmotion' ||
+    category === 'motiondrop' ||
+    category === 'evo' ||
+    category === 'threejs' ||
+    category === 'svg' ||
+    category === 'chart' ||
+    category === 'quiz'
+  );
+}
 
 export interface PreviewLanguageOption {
   id: string;
@@ -45,13 +68,25 @@ export const PREVIEW_LANGUAGE_OPTIONS: PreviewLanguageOption[] = [
   { id: 'javascript', label: 'JavaScript', extension: 'js', category: 'javascript' },
   { id: 'typescript', label: 'TypeScript', extension: 'ts', category: 'javascript' },
   { id: 'threejs', label: 'Three.js (3D WebGL)', extension: 'js', category: 'threejs' },
+  { id: 'bbmodel', label: 'Blockbench (.bbmodel)', extension: 'bbmodel', category: 'threejs' },
   { id: 'p5', label: 'p5.js (Creative Coding)', extension: 'js', category: 'javascript' },
   { id: 'gsap', label: 'GSAP (GreenSock Motion)', extension: 'js', category: 'javascript' },
   { id: 'markdown', label: 'Markdown', extension: 'md', category: 'markdown' },
   { id: 'mermaid', label: 'Mermaid Diagram', extension: 'mmd', category: 'mermaid' },
-  { id: 'stopmotion', label: 'Stop Motion (Vector)', extension: 'json', category: 'stopmotion' },
-  { id: 'pixelart', label: 'Pixel Art (Retro)', extension: 'json', category: 'pixelart' },
+  { id: 'stopmotion', label: 'Stop Motion v3 (Vector)', extension: 'json', category: 'stopmotion' },
+  { id: 'pixelart', label: 'Pixel Art v3 (up to 512×512)', extension: 'json', category: 'pixelart' },
+  { id: 'liquidmotion', label: 'Liquid Motion (Video Hybrid)', extension: 'json', category: 'liquidmotion' },
+  { id: 'liquiddrop', label: 'Liquid Drop (Still Hybrid)', extension: 'json', category: 'liquiddrop' },
+  { id: 'pixelmotion', label: 'Pixel Motion (Animated Pixel Video)', extension: 'json', category: 'pixelmotion' },
+  { id: 'motiondrop', label: 'Motion Drop (3D + Pixel Still)', extension: 'json', category: 'motiondrop' },
+  { id: 'evo', label: 'EVO 3D Engine (Three.js + Liquid Motion)', extension: 'json', category: 'evo' },
+  { id: 'chart', label: 'Interactive Chart', extension: 'json', category: 'chart' },
+  { id: 'quiz', label: 'Interactive Quiz', extension: 'json', category: 'quiz' },
   { id: 'json', label: 'JSON', extension: 'json', category: 'json' },
+  { id: 'yaml', label: 'YAML', extension: 'yaml', category: 'simulated' },
+  { id: 'toml', label: 'TOML', extension: 'toml', category: 'simulated' },
+  { id: 'diff', label: 'Diff / Patch', extension: 'diff', category: 'simulated' },
+  { id: 'latex', label: 'LaTeX / Math', extension: 'tex', category: 'simulated' },
   { id: 'csv', label: 'CSV Table', extension: 'csv', category: 'csv' },
   { id: 'flet', label: 'Flet (Python UI)', extension: 'py', category: 'flet' },
   { id: 'nicegui', label: 'NiceGUI (Python UI)', extension: 'py', category: 'nicegui' },
@@ -329,6 +364,74 @@ button {
 }
 </style>`,
   },
+  {
+    id: 'stopmotion',
+    label: 'Stop Motion v2 (Engine)',
+    language: 'stopmotion',
+    code: `{
+  "format": "stopmotion/v2",
+  "title": "Glossy Kinetic Orb (48f)",
+  "fps": 24,
+  "frameCount": 48,
+  "width": 800,
+  "height": 450,
+  "background": "#faf8f5",
+  "loop": true,
+  "backdrop": "<line x1=\\"80\\" y1=\\"365\\" x2=\\"720\\" y2=\\"365\\" stroke=\\"#cbd5e1\\" stroke-width=\\"2\\"/>",
+  "layers": [
+    {
+      "id": "orb",
+      "shadow": { "groundY": 365, "rx": 52, "ry": 11, "opacity": 0.24 },
+      "motion": {
+        "x": "lerp(180, 620, pingpong(t))",
+        "y": "315 - abs(sin(t * TAU * 2)) * 175",
+        "scaleX": "1 / (abs(sin(t * TAU * 2)) < 0.14 ? 0.68 : 1.04)",
+        "scaleY": "abs(sin(t * TAU * 2)) < 0.14 ? 0.68 : 1.04"
+      },
+      "svg": "<circle cx=\\"0\\" cy=\\"0\\" r=\\"44\\" fill=\\"url(#wetGlazePink)\\"/><ellipse cx=\\"-14\\" cy=\\"-15\\" rx=\\"13\\" ry=\\"7\\" transform=\\"rotate(-30 -14 -15)\\" fill=\\"rgba(255,255,255,0.78)\\" style=\\"mix-blend-mode: screen;\\"/>"
+    }
+  ]
+}`,
+  },
+  {
+    id: 'evo-3d-demo',
+    label: 'EVO 3D Engine (Three.js + Liquid Motion)',
+    language: 'evo',
+    code: `{
+  "format": "evo/v1",
+  "title": "Orbital Core",
+  "width": 800,
+  "height": 450,
+  "fps": 30,
+  "durationSec": 4,
+  "loop": true,
+  "environment": "neon",
+  "background": "#050816",
+  "nodes": [
+    {
+      "id": "core",
+      "type": "icosahedron",
+      "radius": 0.85,
+      "material": { "color": "#38bdf8", "metalness": 0.4, "roughness": 0.2, "iridescence": 0.8 },
+      "motion": { "spinY": 1, "bob": { "amp": 0.18, "freq": 1 } }
+    },
+    {
+      "id": "halo",
+      "type": "torus",
+      "radius": 1.65,
+      "tube": 0.08,
+      "material": { "color": "#e879f9", "emissive": "#a855f7", "emissiveIntensity": 0.5 },
+      "motion": { "rx": "35 + sin(t * TAU) * 25", "ry": "t * 360" }
+    }
+  ],
+  "storyboard": {
+    "shots": [
+      { "label": "Hero Orbit", "start": 0, "end": 1, "cameraCut": "orbit" }
+    ]
+  },
+  "audio": { "mode": "preset", "preset": "ambient", "durationSec": 4 }
+}`,
+  },
 ];
 
 const ALIAS_MAP: Record<string, string> = {
@@ -366,6 +469,17 @@ const ALIAS_MAP: Record<string, string> = {
   'pixel-art': 'pixelart',
   pixart: 'pixelart',
   pixels: 'pixelart',
+  liquidmotion: 'liquidmotion',
+  'liquid-motion': 'liquidmotion',
+  liquiddrop: 'liquiddrop',
+  'liquid-drop': 'liquiddrop',
+  pixelmotion: 'pixelmotion',
+  'pixel-motion': 'pixelmotion',
+  motiondrop: 'motiondrop',
+  'motion-drop': 'motiondrop',
+  evo: 'evo',
+  evo3d: 'evo',
+  'evo/v1': 'evo',
   json: 'json',
   jsonc: 'json',
   csv: 'csv',
@@ -397,6 +511,20 @@ const ALIAS_MAP: Record<string, string> = {
   three: 'threejs',
   threejs: 'threejs',
   'three.js': 'threejs',
+  bbmodel: 'bbmodel',
+  blockbench: 'bbmodel',
+  chart: 'chart',
+  charts: 'chart',
+  rechart: 'chart',
+  quiz: 'quiz',
+  yaml: 'yaml',
+  yml: 'yaml',
+  toml: 'toml',
+  diff: 'diff',
+  patch: 'diff',
+  latex: 'latex',
+  tex: 'latex',
+  math: 'latex',
   p5: 'p5',
   p5js: 'p5',
   'p5.js': 'p5',
@@ -420,8 +548,13 @@ function isStopMotionJson(code: string): boolean {
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
   try {
     const parsed = JSON.parse(trimmed) as
-      | { frames?: Array<unknown> }
+      | { frames?: Array<unknown>; layers?: Array<unknown> }
       | Array<unknown>;
+    if (!Array.isArray(parsed) && Array.isArray(parsed?.layers) && parsed.layers.length > 0) {
+      return parsed.layers.some(
+        (l) => Boolean(l && typeof l === 'object' && ('svg' in l || 'children' in l))
+      );
+    }
     const frames = Array.isArray(parsed) ? parsed : parsed?.frames;
     if (!Array.isArray(frames) || frames.length === 0) return false;
     return frames.some((f) => {
@@ -437,15 +570,79 @@ function isStopMotionJson(code: string): boolean {
   }
 }
 
+function detectHybridFormatJson(
+  code: string
+): 'liquidmotion' | 'liquiddrop' | 'pixelmotion' | 'motiondrop' | null {
+  const trimmed = code.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const fmt = typeof parsed.format === 'string' ? parsed.format.toLowerCase().trim() : '';
+    if (
+      fmt === 'liquidmotion' ||
+      fmt === 'liquiddrop' ||
+      fmt === 'pixelmotion' ||
+      fmt === 'motiondrop'
+    ) {
+      return fmt;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function isPixelArtJson(code: string): boolean {
   const trimmed = code.trim();
   if (!trimmed.startsWith('{')) return false;
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (parsed.format === 'pixelart/v2' || parsed.format === 'pixelart/v3') return true;
     const hasPalette = 'palette' in parsed;
-    const hasPixelsOrFrames = 'frames' in parsed || 'pixels' in parsed;
+    const hasPixelsOrFrames = 'frames' in parsed || 'pixels' in parsed || 'draw' in parsed || 'gradients' in parsed;
     const hasDimensions = 'width' in parsed || 'height' in parsed;
-    return Boolean(hasPalette && (hasPixelsOrFrames || hasDimensions));
+    return Boolean((hasPalette || 'draw' in parsed) && (hasPixelsOrFrames || hasDimensions));
+  } catch {
+    return false;
+  }
+}
+
+function isBlockbenchOrVoxelJson(code: string): boolean {
+  const trimmed = code.trim();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (Array.isArray(parsed.elements) && ('outliner' in parsed || 'meta' in parsed || 'resolution' in parsed || 'textures' in parsed)) {
+      return true;
+    }
+    if (Array.isArray(parsed.voxels) || Array.isArray(parsed.objects)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function isChartJson(code: string): boolean {
+  const trimmed = code.trim();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const hasSeries = Array.isArray(parsed.series) || Array.isArray(parsed.datasets);
+    const hasType = typeof parsed.type === 'string' && /^(bar|line|area|pie|donut|doughnut|scatter|radar)$/i.test(parsed.type);
+    return Boolean(hasSeries && (hasType || Array.isArray(parsed.labels)));
+  } catch {
+    return false;
+  }
+}
+
+function isQuizJson(code: string): boolean {
+  const trimmed = code.trim();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    return Array.isArray(parsed.questions) && parsed.questions.length > 0;
   } catch {
     return false;
   }
@@ -454,6 +651,18 @@ function isPixelArtJson(code: string): boolean {
 function isMultiSvgFrames(code: string): boolean {
   const matches = code.match(/<svg[\s>]/gi);
   return Boolean(matches && matches.length >= 2);
+}
+
+function detectEvoJson(code: string): boolean {
+  const trimmed = code.trim();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const fmt = typeof parsed.format === 'string' ? parsed.format.toLowerCase().trim() : '';
+    return fmt === 'evo/v1' || fmt === 'evo';
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeLanguage(rawLang?: string, code?: string): string {
@@ -469,8 +678,14 @@ export function normalizeLanguage(rawLang?: string, code?: string): string {
       return 'pyscript';
     }
     if (mapped === 'json') {
+      if (detectEvoJson(rawCode)) return 'evo';
+      const hybrid = detectHybridFormatJson(rawCode);
+      if (hybrid) return hybrid;
       if (isPixelArtJson(rawCode)) return 'pixelart';
       if (isStopMotionJson(rawCode)) return 'stopmotion';
+      if (isBlockbenchOrVoxelJson(rawCode)) return 'threejs';
+      if (isChartJson(rawCode)) return 'chart';
+      if (isQuizJson(rawCode)) return 'quiz';
     }
     if (mapped === 'svg' && isMultiSvgFrames(rawCode)) {
       return 'stopmotion';
@@ -509,11 +724,24 @@ export function normalizeLanguage(rawLang?: string, code?: string): string {
     return 'tsx';
   }
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    const hybrid = detectHybridFormatJson(trimmed);
+    if (hybrid) {
+      return hybrid;
+    }
     if (isPixelArtJson(trimmed)) {
       return 'pixelart';
     }
     if (isStopMotionJson(trimmed)) {
       return 'stopmotion';
+    }
+    if (isBlockbenchOrVoxelJson(trimmed)) {
+      return 'threejs';
+    }
+    if (isChartJson(trimmed)) {
+      return 'chart';
+    }
+    if (isQuizJson(trimmed)) {
+      return 'quiz';
     }
     try {
       JSON.parse(trimmed);
@@ -555,14 +783,22 @@ export function getFileExtension(langId: string): string {
   return found?.extension || langId || 'txt';
 }
 
-const LIBRARIES_BUNDLE_SCRIPTS = `
-<script src="https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.min.js"></script>
+function getLibrariesBundleScripts(): string {
+  const origin =
+    typeof window !== 'undefined' &&
+    window.location?.origin &&
+    window.location.origin !== 'null'
+      ? window.location.origin
+      : '';
+  return `
+<script src="${origin}/api/vendor/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/p5@1.11.3/lib/p5.min.js"></script>
 `;
+}
 
 const CONSOLE_BRIDGE_SCRIPT = `
-${LIBRARIES_BUNDLE_SCRIPTS}
+${getLibrariesBundleScripts()}
 <script>
 (function() {
   function serialize(arg) {

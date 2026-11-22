@@ -24,6 +24,7 @@ import {
   extractNpmDependencies,
   mapLanguageToSandpackTemplate,
 } from '../utils/sandpackHelpers';
+import { studioLogger } from '../utils/studioLogger';
 
 interface SandpackWorkbenchProps {
   code: string;
@@ -62,6 +63,15 @@ export const SandpackWorkbench: React.FC<SandpackWorkbenchProps> = ({
     [detectedDeps, customDeps]
   );
 
+  useEffect(() => {
+    const depList = Object.entries(mergedDeps)
+      .map(([k, v]) => `${k}@${v}`)
+      .join(', ');
+    if (depList) {
+      studioLogger.log('Sandpack', `Bundling [${template}] with dependencies: ${depList}`);
+    }
+  }, [template, mergedDeps]);
+
   const files = useMemo(
     () => buildSandpackFiles(template, code),
     [template, code]
@@ -82,6 +92,7 @@ export const SandpackWorkbench: React.FC<SandpackWorkbenchProps> = ({
     }
 
     setCustomDeps((prev) => ({ ...prev, [name]: version }));
+    studioLogger.success('Sandpack', `Added npm dependency ${name}@${version}`);
     setPkgInput('');
   };
 

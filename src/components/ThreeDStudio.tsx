@@ -167,49 +167,78 @@ export const ThreeDStudio: React.FC<ThreeDStudioProps> = ({
     }
   };
 
+  const captureIframeSnapshot = (onDataUrl: (dataUrl: string) => void, onError: () => void) => {
+    const iframe = document.getElementById('three-studio-iframe') as HTMLIFrameElement | null;
+    if (!iframe || !iframe.contentWindow) {
+      onError();
+      return;
+    }
+    try {
+      const canvas = iframe.contentWindow.document.querySelector('canvas');
+      if (canvas) {
+        onDataUrl(canvas.toDataURL('image/png'));
+        return;
+      }
+    } catch {
+      // Sandboxed iframe — use postMessage bridge
+    }
+    const requestId = `studio-snap-${Date.now()}-${Math.random()}`;
+    let settled = false;
+    const onMessage = (ev: MessageEvent) => {
+      if (
+        ev.data &&
+        ev.data.type === 'folio-three-snapshot-data' &&
+        ev.data.requestId === requestId &&
+        typeof ev.data.dataUrl === 'string'
+      ) {
+        settled = true;
+        window.removeEventListener('message', onMessage);
+        onDataUrl(ev.data.dataUrl);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      if (!settled) onError();
+    }, 2500);
+    iframe.contentWindow.postMessage({ type: 'folio-three-snapshot-request', requestId }, '*');
+  };
+
   const handleSnapshotPng = () => {
     setExportMenuOpen(false);
-    try {
-      const iframe = document.getElementById('three-studio-iframe') as HTMLIFrameElement;
-      if (!iframe || !iframe.contentWindow) return;
-      const canvas = iframe.contentWindow.document.querySelector('canvas');
-      if (!canvas) return;
-      const dataUrl = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = `${(sceneSpec.title || '3d-scene').toLowerCase().replace(/\s+/g, '-')}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      showTempStatus('Downloaded PNG snapshot.');
-    } catch {
-      showTempStatus('Snapshot capture failed.');
-    }
+    captureIframeSnapshot(
+      (dataUrl) => {
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `${(sceneSpec.title || '3d-scene').toLowerCase().replace(/\s+/g, '-')}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showTempStatus('Downloaded PNG snapshot.');
+      },
+      () => showTempStatus('Snapshot capture failed.')
+    );
   };
 
   const handleAttachSnapshotToChat = () => {
     setExportMenuOpen(false);
-    try {
-      const iframe = document.getElementById('three-studio-iframe') as HTMLIFrameElement;
-      if (!iframe || !iframe.contentWindow) return;
-      const canvas = iframe.contentWindow.document.querySelector('canvas');
-      if (!canvas) return;
-      const dataUrl = canvas.toDataURL('image/png');
-      const comma = dataUrl.indexOf(',');
-      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-      onAttachToChat({
-        id: crypto.randomUUID(),
-        name: '3d-scene-snapshot.png',
-        mimeType: 'image/png',
-        size: Math.round((base64.length * 3) / 4),
-        isText: false,
-        data: base64,
-        previewUrl: dataUrl,
-      });
-      showTempStatus('Attached 3D snapshot to composer.');
-    } catch {
-      showTempStatus('Attachment failed.');
-    }
+    captureIframeSnapshot(
+      (dataUrl) => {
+        const comma = dataUrl.indexOf(',');
+        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+        onAttachToChat({
+          id: crypto.randomUUID(),
+          name: '3d-scene-snapshot.png',
+          mimeType: 'image/png',
+          size: Math.round((base64.length * 3) / 4),
+          isText: false,
+          data: base64,
+          previewUrl: dataUrl,
+        });
+        showTempStatus('Attached 3D snapshot to composer.');
+      },
+      () => showTempStatus('Attachment failed.')
+    );
   };
 
   return (

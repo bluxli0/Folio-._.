@@ -11,6 +11,20 @@ export type PixelArtTool =
 
 export type SymmetryMode = 'none' | 'horizontal' | 'vertical' | 'quad';
 
+export type PixelShaderType =
+  | 'vignette'
+  | 'scanline'
+  | 'crt'
+  | 'chromatic'
+  | 'glow'
+  | 'posterize';
+
+export interface PixelShaderSpec {
+  type: PixelShaderType;
+  intensity?: number;
+  color?: string;
+}
+
 export interface PixelArtFrame {
   id: string;
   pixels: string[]; // 1D array of hex color strings length width * height, or empty/transparent strings
@@ -19,11 +33,13 @@ export interface PixelArtFrame {
 
 export interface PixelArtSpec {
   title?: string;
+  format?: string;
   width: number;
   height: number;
   palette?: string[];
   fps?: number;
   loop?: boolean;
+  shaders?: PixelShaderSpec[];
   frames: PixelArtFrame[];
 }
 

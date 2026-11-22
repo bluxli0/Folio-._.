@@ -36,6 +36,7 @@ import { SandpackWorkbench } from './SandpackWorkbench';
 import { InlineStopMotionPlayer } from './InlineStopMotionPlayer';
 import { InlinePixelArtViewer } from './InlinePixelArtViewer';
 import { InlineThreeJsViewer } from './InlineThreeJsViewer';
+import { InlineChartViewer, InlineQuizViewer } from './InlineRichMedia';
 import {
   PublishSandboxResult,
   canPublishOnlineSandbox,
@@ -473,6 +474,10 @@ export const InlineCodeSandbox: React.FC<InlineCodeSandboxProps> = ({
               ? 'JS / TS Sandbox'
               : category === 'stopmotion'
               ? 'Vector Stop Motion'
+              : category === 'chart'
+              ? 'Interactive Chart'
+              : category === 'quiz'
+              ? 'Interactive Quiz'
               : category === 'svg'
               ? 'SVG Render'
               : category === 'mermaid'
@@ -955,6 +960,16 @@ export const InlineCodeSandbox: React.FC<InlineCodeSandboxProps> = ({
       {/* Three.js 3D Viewer */}
       {category === 'threejs' && (
         <InlineThreeJsViewer code={code} />
+      )}
+
+      {/* Interactive Chart */}
+      {category === 'chart' && (
+        <InlineChartViewer code={code} />
+      )}
+
+      {/* Interactive Quiz */}
+      {category === 'quiz' && (
+        <InlineQuizViewer code={code} />
       )}
 
       {/* SVG */}

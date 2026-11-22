@@ -1,0 +1,186 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: deny all unspecified paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBluxliEmail() {
+      return request.auth.token.email is string
+        && request.auth.token.email.lower().matches('^[^@]+@([a-z0-9-]+\\.)*bluxli\\.me$');
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || isBluxliEmail());
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'fontPreset', 'defaultPureCode', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 120
+        && (!data.keys().hasAny(['photoURL']) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && (!data.keys().hasAny(['fontPreset']) || (data.fontPreset is string && data.fontPreset in ['studio-sans', 'geometric-outfit', 'editorial-serif', 'technical-mono']))
+        && (!data.keys().hasAny(['defaultPureCode']) || data.defaultPureCode is bool)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidInstruction(data, userId, instructionId) {
+      return data.keys().hasAll(['id', 'ownerId', 'name', 'instruction', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'name', 'instruction', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && isValidId(data.id)
+        && data.id == instructionId
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 120
+        && data.instruction is string
+        && data.instruction.size() >= 1
+        && data.instruction.size() <= 16000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFunctionTool(data, userId, toolId) {
+      return data.keys().hasAll(['id', 'ownerId', 'name', 'description', 'parametersJson', 'handlerCode', 'enabled', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'name', 'description', 'parametersJson', 'handlerCode', 'enabled', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && isValidId(data.id)
+        && data.id == toolId
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 64
+        && data.name.matches('^[a-zA-Z_][a-zA-Z0-9_]*$')
+        && data.description is string
+        && data.description.size() >= 1
+        && data.description.size() <= 512
+        && data.parametersJson is string
+        && data.parametersJson.size() >= 2
+        && data.parametersJson.size() <= 8000
+        && data.handlerCode is string
+        && data.handlerCode.size() >= 1
+        && data.handlerCode.size() <= 16000
+        && data.enabled is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isValidId(userId)
+        && isVerifiedUser()
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isVerifiedUser()
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoURL', 'fontPreset', 'defaultPureCode', 'updatedAt']);
+
+      allow delete: if isValidId(userId) && isVerifiedUser() && isOwner(userId);
+
+      match /instructions/{instructionId} {
+        allow get: if isValidId(userId) && isValidId(instructionId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(instructionId)
+          && isVerifiedUser()
+          && isOwner(userId)
+          && isValidInstruction(incoming(), userId, instructionId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isValidId(userId)
+          && isValidId(instructionId)
+          && isVerifiedUser()
+          && isOwner(userId)
+          && isValidInstruction(incoming(), userId, instructionId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'instruction', 'updatedAt']);
+
+        allow delete: if isValidId(userId) && isValidId(instructionId) && isVerifiedUser() && isOwner(userId);
+      }
+
+      match /tools/{toolId} {
+        allow get: if isValidId(userId) && isValidId(toolId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(toolId)
+          && isVerifiedUser()
+          && isOwner(userId)
+          && isValidFunctionTool(incoming(), userId, toolId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isValidId(userId)
+          && isValidId(toolId)
+          && isVerifiedUser()
+          && isOwner(userId)
+          && isValidFunctionTool(incoming(), userId, toolId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'parametersJson', 'handlerCode', 'enabled', 'updatedAt']);
+
+        allow delete: if isValidId(userId) && isValidId(toolId) && isVerifiedUser() && isOwner(userId);
+      }
+    }
+  }
+}

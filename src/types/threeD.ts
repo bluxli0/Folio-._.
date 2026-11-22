@@ -51,6 +51,14 @@ export interface ThreeDObjectSpec {
   speed: number;
 }
 
+export interface ThreeDVoxel {
+  x: number;
+  y: number;
+  z: number;
+  color: string;
+  size?: number;
+}
+
 export interface ThreeDSceneSpec {
   title: string;
   description?: string;
@@ -61,6 +69,8 @@ export interface ThreeDSceneSpec {
   shadows: boolean;
   objects: ThreeDObjectSpec[];
   customJsCode?: string;
+  bbmodel?: Record<string, unknown>;
+  voxels?: ThreeDVoxel[];
 }
 
 export interface ThreeDDemo {

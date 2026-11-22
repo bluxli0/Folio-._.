@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Archive,
   Check,
   ExternalLink,
   FileCode2,
   FolderGit2,
   FolderOpen,
   FolderPlus,
+  GitBranch,
   Github,
   Loader2,
   Monitor,
@@ -14,21 +16,29 @@ import {
   RotateCw,
   Save,
   Smartphone,
+  Sparkles,
   Terminal,
   Trash2,
   Upload,
+  Workflow,
+  Wrench,
 } from 'lucide-react';
 import {
   DesignSystemConfig,
+  GitHubPushResult,
   GitHubRepoSummary,
   GitHubStatus,
+  WorkflowStepResult,
   WorkspaceFileEntry,
+  WorkspaceSummary,
 } from '../types/designSystem';
 import { buildDesignSystemCss } from '../utils/designSystem';
 
 interface FolderSandboxPanelProps {
   workspaceId: string;
+  onChangeWorkspaceId: (nextId: string) => void;
   designSystem: DesignSystemConfig;
+  refreshSignal?: number;
   onWorkspaceFilesSnapshot?: (files: Array<{ path: string; content: string }>) => void;
 }
 
@@ -158,11 +168,126 @@ with open("site/app.js", "w", encoding="utf-8") as f:
 print("Created site/index.html, site/style.css, site/app.js")
 `;
 
+const STARTER_MOD_WORKFLOW_FILES = [
+  {
+    path: 'generate_mod.py',
+    content: `import json, os, uuid
+
+os.makedirs("mod_build/tool", exist_ok=True)
+os.makedirs("mod_build/assets", exist_ok=True)
+
+manifest = {
+    "format_version": 2,
+    "header": {
+        "name": "Procedural Sprite & Orbit Mod",
+        "description": "Generated via Python + Folio Workflow Pipeline",
+        "uuid": str(uuid.uuid4()),
+        "version": [1, 0, 0]
+    },
+    "modules": [
+        {"type": "data", "uuid": str(uuid.uuid4()), "version": [1, 0, 0]}
+    ]
+}
+
+with open("mod_build/manifest.json", "w", encoding="utf-8") as f:
+    json.dump(manifest, f, indent=2)
+
+tool_html = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mod &amp; Tool Pack Inspector</title>
+  <style>
+    body { margin: 0; padding: 24px; font-family: system-ui, sans-serif; background: var(--surface-color, #111827); color: var(--text-color, #f8fafc); }
+    .card { max-width: 560px; margin: 0 auto; padding: 20px; border-radius: var(--radius, 12px); border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.04); }
+    .tag { display: inline-block; font-size: 11px; font-weight: 700; color: var(--accent-color, #f59e0b); margin-bottom: 6px; }
+    pre { padding: 12px; border-radius: 10px; background: rgba(0,0,0,0.35); font-size: 12px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="tag">MOD / TOOL WORKFLOW OUTPUT</div>
+    <h2 style="margin:0 0 8px;">Mod Pack Built &amp; Validated</h2>
+    <p style="font-size:13px;opacity:0.8;">Generated <code>mod_build/manifest.json</code> and validated via <code>folio.workflow.json</code>.</p>
+    <pre id="manifest-view">Loading manifest...</pre>
+  </div>
+  <script>
+    fetch('../manifest.json').then(r => r.json()).then(d => {
+      document.getElementById('manifest-view').textContent = JSON.stringify(d, null, 2);
+    });
+  </script>
+</body>
+</html>
+"""
+
+with open("mod_build/tool/index.html", "w", encoding="utf-8") as f:
+    f.write(tool_html)
+
+print("Step 1 OK: Generated mod_build/manifest.json and mod_build/tool/index.html")
+`,
+  },
+  {
+    path: 'validate_mod.js',
+    content: `const fs = require('fs');
+const path = require('path');
+
+const manifestPath = path.join(process.cwd(), 'mod_build', 'manifest.json');
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+if (!manifest.header?.uuid || !Array.isArray(manifest.modules)) {
+  throw new Error('Invalid mod manifest structure');
+}
+
+fs.writeFileSync(
+  path.join(process.cwd(), 'mod_build', 'build-report.json'),
+  JSON.stringify({
+    validatedAt: new Date().toISOString(),
+    modName: manifest.header.name,
+    version: manifest.header.version.join('.'),
+    status: 'READY_TO_PACKAGE'
+  }, null, 2)
+);
+
+console.log('Step 2 OK: Validated', manifest.header.name, '-> mod_build/build-report.json');
+`,
+  },
+  {
+    path: 'folio.workflow.json',
+    content: JSON.stringify(
+      {
+        name: 'Mod & Tool Build Pipeline',
+        steps: [
+          {
+            name: 'Generate Mod Scaffold (Python)',
+            language: 'python',
+            filePath: 'generate_mod.py',
+          },
+          {
+            name: 'Validate Manifest & Write Build Report (Node)',
+            language: 'javascript',
+            filePath: 'validate_mod.js',
+          },
+        ],
+      },
+      null,
+      2
+    ),
+  },
+];
+
 export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
   workspaceId,
+  onChangeWorkspaceId,
   designSystem,
+  refreshSignal = 0,
   onWorkspaceFilesSnapshot,
 }) => {
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [showNewProjectRow, setShowNewProjectRow] = useState(false);
+  const [newProjectInput, setNewProjectInput] = useState('');
+  const [projectError, setProjectError] = useState<string | null>(null);
+
   const [files, setFiles] = useState<WorkspaceFileEntry[]>([]);
   const [entryFolders, setEntryFolders] = useState<string[]>([]);
   const [selectedEntryFolder, setSelectedEntryFolder] = useState<string>('');
@@ -174,17 +299,24 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
   const [newFilePathInput, setNewFilePathInput] = useState<string>('');
   const [showNewFileRow, setShowNewFileRow] = useState<boolean>(false);
 
-  // Script execution state
+  // Script & Workflow execution state
   const [isRunningScript, setIsRunningScript] = useState<boolean>(false);
   const [execStdout, setExecStdout] = useState<string>('');
   const [execStderr, setExecStderr] = useState<string>('');
   const [execRuntime, setExecRuntime] = useState<string>('');
   const [execExitCode, setExecExitCode] = useState<number | null>(null);
+  const [workflowResults, setWorkflowResults] = useState<WorkflowStepResult[] | null>(null);
 
   // Live Folder Render pane state
   const [subView, setSubView] = useState<'render' | 'editor' | 'github'>('render');
   const [renderNonce, setRenderNonce] = useState<number>(0);
   const [viewportWidth, setViewportWidth] = useState<'full' | 'mobile'>('full');
+
+  // Workspace AI runner state
+  const [aiPromptInput, setAiPromptInput] = useState<string>('');
+  const [isRunningAi, setIsRunningAi] = useState<boolean>(false);
+  const [aiStatusMsg, setAiStatusMsg] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   // GitHub state
   const [ghStatus, setGhStatus] = useState<GitHubStatus>({ configured: false, connected: false });
@@ -196,7 +328,33 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
   const [ghMessage, setGhMessage] = useState<string | null>(null);
   const [ghFallbackAuthUrl, setGhFallbackAuthUrl] = useState<string | null>(null);
 
+  // Create Repo & Push state
+  const [newRepoName, setNewRepoName] = useState<string>('');
+  const [newRepoDesc, setNewRepoDesc] = useState<string>('');
+  const [newRepoPrivate, setNewRepoPrivate] = useState<boolean>(false);
+  const [isCreatingRepo, setIsCreatingRepo] = useState<boolean>(false);
+
+  const [pushRepoInput, setPushRepoInput] = useState<string>('');
+  const [pushBranchInput, setPushBranchInput] = useState<string>('main');
+  const [pushSubpathInput, setPushSubpathInput] = useState<string>('');
+  const [pushMessageInput, setPushMessageInput] = useState<string>('');
+  const [isPushingGh, setIsPushingGh] = useState<boolean>(false);
+  const [lastPushResult, setLastPushResult] = useState<GitHubPushResult | null>(null);
+
   const folderUploadRef = useRef<HTMLInputElement>(null);
+
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      const res = await fetch('/api/workspaces');
+      if (!res.ok) return;
+      const data = (await res.json()) as { workspaces?: WorkspaceSummary[] };
+      if (Array.isArray(data.workspaces)) {
+        setWorkspaces(data.workspaces);
+      }
+    } catch {
+      // Non-fatal
+    }
+  }, []);
 
   const syncDesignCssToWorkspace = useCallback(async () => {
     try {
@@ -229,15 +387,18 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
       setEntryFolders(data.entryFolders);
       if (data.entryFolders.length > 0 && !data.entryFolders.includes(selectedEntryFolder)) {
         setSelectedEntryFolder(data.entryFolders[0]);
+      } else if (data.entryFolders.length === 0) {
+        setSelectedEntryFolder('');
       }
+      void refreshWorkspaces();
     } catch {
       // Ignore network hiccup
     }
-  }, [workspaceId, selectedEntryFolder]);
+  }, [workspaceId, selectedEntryFolder, refreshWorkspaces]);
 
   useEffect(() => {
     void refreshFiles();
-  }, [refreshFiles]);
+  }, [refreshFiles, refreshSignal]);
 
   // Snapshot text files for JSON bundle export when files change
   useEffect(() => {
@@ -305,6 +466,55 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
     return () => window.removeEventListener('message', handleMsg);
   }, [loadGitHubStatus]);
 
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProjectError(null);
+    const cleaned = newProjectInput
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    if (cleaned.length < 3) {
+      setProjectError('Use at least 3 characters (letters, numbers, dash, underscore).');
+      return;
+    }
+    try {
+      const res = await fetch('/api/workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: cleaned }),
+      });
+      const data = (await res.json()) as { workspace?: WorkspaceSummary; error?: string };
+      if (!res.ok || !data.workspace) {
+        throw new Error(data.error || 'Could not create project.');
+      }
+      setNewProjectInput('');
+      setShowNewProjectRow(false);
+      setWorkflowResults(null);
+      setExecStdout('');
+      setExecStderr('');
+      onChangeWorkspaceId(data.workspace.id);
+      void refreshWorkspaces();
+    } catch (err) {
+      setProjectError(err instanceof Error ? err.message : 'Unable to create project.');
+    }
+  };
+
+  const handleDeleteCurrentProject = async () => {
+    if (workspaceId === 'folio-sandbox-1') return;
+    try {
+      const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        onChangeWorkspaceId('folio-sandbox-1');
+        void refreshWorkspaces();
+      }
+    } catch {
+      // Ignore
+    }
+  };
+
   const handleOpenFile = async (relPath: string) => {
     try {
       const res = await fetch(
@@ -344,6 +554,7 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 1500);
       setRenderNonce((n) => n + 1);
+      void refreshWorkspaces();
     } catch (err) {
       setExecStderr(err instanceof Error ? err.message : 'Save failed.');
     }
@@ -351,12 +562,14 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
 
   const handleRunScript = async (overridePath?: string, overrideCode?: string) => {
     const targetPath = overridePath || activeFilePath || 'build_site.py';
-    const targetCode = overrideCode !== undefined ? overrideCode : overridePath ? undefined : editorText;
+    const targetCode =
+      overrideCode !== undefined ? overrideCode : overridePath ? undefined : editorText;
 
     setIsRunningScript(true);
     setExecStdout('');
     setExecStderr('');
     setExecExitCode(null);
+    setWorkflowResults(null);
 
     try {
       await syncDesignCssToWorkspace();
@@ -394,9 +607,126 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
       }
       setIsDirty(false);
       setRenderNonce((n) => n + 1);
+      void refreshWorkspaces();
     } catch (err) {
       setExecStderr(err instanceof Error ? err.message : 'Script execution failed.');
     } finally {
+      setIsRunningScript(false);
+    }
+  };
+
+  const handleRunWorkflow = async () => {
+    setIsRunningScript(true);
+    setExecStdout('');
+    setExecStderr('');
+    setExecExitCode(null);
+    setWorkflowResults(null);
+
+    try {
+      await syncDesignCssToWorkspace();
+      const res = await fetch(`/api/workspace/${encodeURIComponent(workspaceId)}/workflow`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stopOnError: true }),
+      });
+      const data = (await res.json()) as {
+        exitCode?: number;
+        steps?: WorkflowStepResult[];
+        files?: WorkspaceFileEntry[];
+        entryFolders?: string[];
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || 'Workflow execution failed.');
+      }
+      setWorkflowResults(data.steps || []);
+      setExecExitCode(typeof data.exitCode === 'number' ? data.exitCode : 0);
+      if (data.files) setFiles(data.files);
+      if (data.entryFolders) {
+        setEntryFolders(data.entryFolders);
+        if (data.entryFolders.length > 0) {
+          setSelectedEntryFolder(data.entryFolders[0]);
+        }
+      }
+      setRenderNonce((n) => n + 1);
+      void refreshWorkspaces();
+    } catch (err) {
+      setExecStderr(err instanceof Error ? err.message : 'Workflow failed.');
+    } finally {
+      setIsRunningScript(false);
+    }
+  };
+
+  const handleRunWorkspaceAi = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const prompt = aiPromptInput.trim();
+    if (!prompt || isRunningAi) return;
+    setIsRunningAi(true);
+    setAiError(null);
+    setAiStatusMsg(null);
+    try {
+      const res = await fetch(`/api/workspace/${encodeURIComponent(workspaceId)}/ai-run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        summary?: string;
+        writtenPaths?: string[];
+        files?: WorkspaceFileEntry[];
+        entryFolders?: string[];
+        durationMs?: number;
+        error?: string;
+      };
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Workspace AI run failed.');
+      }
+      if (data.files) setFiles(data.files);
+      if (data.entryFolders) {
+        setEntryFolders(data.entryFolders);
+        if (data.entryFolders.length > 0 && !selectedEntryFolder) {
+          setSelectedEntryFolder(data.entryFolders[0]);
+        }
+      }
+      const writtenCount = data.writtenPaths?.length || 0;
+      const secs = typeof data.durationMs === 'number' ? ` in ${(data.durationMs / 1000).toFixed(2)}s` : '';
+      setAiStatusMsg(
+        `${data.summary || 'Workspace updated'} · ${writtenCount} file(s) updated${secs}`
+      );
+      if (data.writtenPaths && data.writtenPaths.length > 0) {
+        void handleOpenFile(data.writtenPaths[0]);
+      }
+      setAiPromptInput('');
+      setRenderNonce((n) => n + 1);
+      void refreshWorkspaces();
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Workspace AI automation failed.');
+    } finally {
+      setIsRunningAi(false);
+    }
+  };
+
+  const handleBootstrapModWorkflow = async () => {
+    setIsRunningScript(true);
+    setExecStdout('');
+    setExecStderr('');
+    try {
+      await fetch(`/api/workspace/${encodeURIComponent(workspaceId)}/files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          designSystemCss: buildDesignSystemCss(designSystem),
+          files: STARTER_MOD_WORKFLOW_FILES,
+        }),
+      });
+      setActiveFilePath('folio.workflow.json');
+      setEditorText(STARTER_MOD_WORKFLOW_FILES[2].content);
+      setIsDirty(false);
+      setSubView('editor');
+      await handleRunWorkflow();
+    } catch (err) {
+      setExecStderr(err instanceof Error ? err.message : 'Unable to scaffold mod workflow.');
       setIsRunningScript(false);
     }
   };
@@ -412,6 +742,8 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
       ? 'body { font-family: system-ui, sans-serif; background: var(--surface-color, #111827); color: var(--text-color, #fff); }'
       : cleaned.endsWith('.py')
       ? 'import os\nprint("Ready inside sandbox folder!")'
+      : cleaned.endsWith('.json')
+      ? '{\n  "name": "folio-project"\n}'
       : '// Script file\nconsole.log("Loaded");';
     setEditorText(starter);
     setShowNewFileRow(false);
@@ -440,6 +772,7 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
       };
       setFiles(data.files);
       setEntryFolders(data.entryFolders);
+      void refreshWorkspaces();
     }
   };
 
@@ -450,7 +783,6 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
     const payloadFiles: Array<{ path: string; content: string; encoding: 'utf8' | 'base64' }> = [];
     for (const file of Array.from(fileList).slice(0, 80)) {
       const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-      // Strip top-level chosen folder name if all files share it
       const parts = rel.split('/');
       const cleanRel = parts.length > 1 ? parts.slice(1).join('/') : rel;
       if (file.size > 512 * 1024) continue;
@@ -488,6 +820,7 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
         setSubView('render');
       }
       setRenderNonce((n) => n + 1);
+      void refreshWorkspaces();
     }
     e.target.value = '';
   };
@@ -554,10 +887,13 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
           setSelectedEntryFolder(data.entryFolders[0]);
         }
       }
+      setPushRepoInput(`${data.owner}/${data.repo}`);
+      if (data.branch) setPushBranchInput(data.branch);
       setGhMessage(
         `Imported ${data.importedCount ?? 0} files from ${data.owner}/${data.repo} (${data.branch}).`
       );
       setRenderNonce((n) => n + 1);
+      void refreshWorkspaces();
       if (data.entryFolders && data.entryFolders.length > 0) {
         setSubView('render');
       } else {
@@ -570,9 +906,89 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
     }
   };
 
+  const handleCreateGitHubRepo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRepoName.trim()) {
+      setGhMessage('Enter a repository name to create.');
+      return;
+    }
+    setIsCreatingRepo(true);
+    setGhMessage(null);
+    try {
+      const res = await fetch('/api/github/repos/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newRepoName.trim(),
+          description: newRepoDesc.trim() || `Folio project "${workspaceId}"`,
+          isPrivate: newRepoPrivate,
+        }),
+      });
+      const data = (await res.json()) as {
+        repo?: GitHubRepoSummary;
+        error?: string;
+      };
+      if (!res.ok || !data.repo) {
+        throw new Error(data.error || 'Failed to create repository.');
+      }
+      setPushRepoInput(data.repo.full_name);
+      setPushBranchInput(data.repo.default_branch || 'main');
+      setGhRepoInput(data.repo.full_name);
+      setNewRepoName('');
+      setNewRepoDesc('');
+      setGhMessage(`Created ${data.repo.full_name} — ready to push "${workspaceId}"!`);
+      void loadGitHubStatus();
+    } catch (err) {
+      setGhMessage(err instanceof Error ? err.message : 'Repository creation failed.');
+    } finally {
+      setIsCreatingRepo(false);
+    }
+  };
+
+  const handlePushToGitHub = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pushRepoInput.trim()) {
+      setGhMessage('Enter target repository as "owner/repo".');
+      return;
+    }
+    setIsPushingGh(true);
+    setGhMessage(null);
+    setLastPushResult(null);
+    try {
+      const res = await fetch('/api/github/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo: pushRepoInput.trim(),
+          branch: pushBranchInput.trim() || undefined,
+          subpath: pushSubpathInput.trim() || undefined,
+          commitMessage:
+            pushMessageInput.trim() || `Update project "${workspaceId}" from Folio`,
+          workspaceId,
+        }),
+      });
+      const data = (await res.json()) as GitHubPushResult & { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || 'GitHub push failed.');
+      }
+      setLastPushResult(data);
+      setGhMessage(
+        `Pushed ${data.pushedCount} file(s) to ${data.owner}/${data.repo} (${data.branch}).`
+      );
+    } catch (err) {
+      setGhMessage(err instanceof Error ? err.message : 'GitHub push failed.');
+    } finally {
+      setIsPushingGh(false);
+    }
+  };
+
   const runnableScripts = useMemo(
-    () =>
-      files.filter((f) => /\.(py|js|ts|sh)$/i.test(f.path)),
+    () => files.filter((f) => /\.(py|js|ts|sh)$/i.test(f.path)),
+    [files]
+  );
+
+  const hasWorkflowFile = useMemo(
+    () => files.some((f) => f.path === 'folio.workflow.json'),
     [files]
   );
 
@@ -585,6 +1001,111 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-white dark:bg-[#171717]">
+      {/* Project Workspace Switcher + Export Bar */}
+      <div className="px-3 sm:px-4 py-1.5 border-b border-neutral-200 dark:border-white/10 bg-[#f4f5f7] dark:bg-[#18191d] flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+            Project:
+          </span>
+          <select
+            value={workspaceId}
+            onChange={(e) => {
+              setWorkflowResults(null);
+              setExecStdout('');
+              setExecStderr('');
+              setLastPushResult(null);
+              onChangeWorkspaceId(e.target.value);
+            }}
+            aria-label="Select project workspace"
+            className="h-7 max-w-[190px] rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#25272d] px-2 text-xs font-mono text-[#0d0d0d] dark:text-white"
+          >
+            {workspaces.length === 0 ? (
+              <option value={workspaceId}>{workspaceId}</option>
+            ) : (
+              workspaces.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.id} ({w.fileCount} files)
+                </option>
+              ))
+            )}
+          </select>
+
+          <button
+            type="button"
+            onClick={() => {
+              setProjectError(null);
+              setShowNewProjectRow((v) => !v);
+            }}
+            className="inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#25272d] text-[11px] font-medium text-[#0d0d0d] dark:text-white hover:bg-neutral-100 dark:hover:bg-white/10"
+          >
+            <Plus className="w-3 h-3" />
+            <span>New Project</span>
+          </button>
+
+          {workspaceId !== 'folio-sandbox-1' && (
+            <button
+              type="button"
+              onClick={handleDeleteCurrentProject}
+              title={`Delete project "${workspaceId}"`}
+              className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {hasWorkflowFile && (
+            <button
+              type="button"
+              onClick={handleRunWorkflow}
+              disabled={isRunningScript}
+              title="Run folio.workflow.json pipeline"
+              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-indigo-600 text-white text-[11px] font-medium hover:bg-indigo-500 disabled:opacity-50"
+            >
+              <Workflow className="w-3.5 h-3.5" />
+              <span>Run Workflow</span>
+            </button>
+          )}
+          <a
+            href={`/api/workspace/${encodeURIComponent(workspaceId)}/archive.zip`}
+            download={`${workspaceId}.zip`}
+            title="Download entire project folder as ZIP"
+            className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#25272d] text-[11px] font-medium text-[#0d0d0d] dark:text-white hover:bg-neutral-100 dark:hover:bg-white/10"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            <span>Export .zip</span>
+          </a>
+        </div>
+      </div>
+
+      {showNewProjectRow && (
+        <form
+          onSubmit={handleCreateProject}
+          className="px-3 sm:px-4 py-2 border-b border-neutral-200 dark:border-white/10 bg-[#eef2ff] dark:bg-indigo-950/25 flex flex-wrap items-center gap-2 text-xs shrink-0"
+        >
+          <input
+            type="text"
+            value={newProjectInput}
+            onChange={(e) => setNewProjectInput(e.target.value)}
+            placeholder="my-mod-project"
+            className="h-7 w-48 rounded-lg border border-neutral-300 dark:border-white/15 bg-white dark:bg-[#14161a] px-2.5 text-xs font-mono text-[#0d0d0d] dark:text-white"
+          />
+          <button
+            type="submit"
+            className="h-7 px-3 rounded-lg bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] text-xs font-medium"
+          >
+            Create Isolated Folder
+          </button>
+          <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
+            Local workspace only — push to GitHub whenever ready.
+          </span>
+          {projectError && (
+            <span className="text-[11px] text-red-600 dark:text-red-400">{projectError}</span>
+          )}
+        </form>
+      )}
+
       {/* Sub-navigation & Folder Actions */}
       <div className="px-3 sm:px-4 py-2 border-b border-neutral-200 dark:border-white/10 bg-[#fafafa] dark:bg-[#1c1d21] flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-1 rounded-xl bg-neutral-200/70 dark:bg-[#2a2c32] p-0.5">
@@ -608,7 +1129,7 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
                 : 'text-neutral-600 dark:text-neutral-300'
             }`}
           >
-            Files &amp; Python ({files.length})
+            Files &amp; Scripts ({files.length})
           </button>
           <button
             type="button"
@@ -624,7 +1145,7 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <input
             ref={folderUploadRef}
             type="file"
@@ -637,10 +1158,20 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
           <button
             type="button"
             onClick={() => folderUploadRef.current?.click()}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-neutral-200 dark:border-white/15 text-xs font-medium text-[#0d0d0d] dark:text-[#ececec] hover:bg-neutral-100 dark:hover:bg-white/10 whitespace-nowrap"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-neutral-200 dark:border-white/15 text-xs font-medium text-[#0d0d0d] dark:text-[#ececec] hover:bg-neutral-100 dark:hover:bg-white/10 whitespace-nowrap"
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>Upload Folder</span>
+            <span>Upload</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleBootstrapModWorkflow}
+            disabled={isRunningScript}
+            title="Scaffold Python + Node mod/tool builder & run folio.workflow.json"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-500/20 disabled:opacity-50 whitespace-nowrap"
+          >
+            <Wrench className="w-3.5 h-3.5" />
+            <span>Mod/Tool Workflow</span>
           </button>
           <button
             type="button"
@@ -654,7 +1185,7 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
             ) : (
               <Play className="w-3.5 h-3.5 fill-current" />
             )}
-            <span>Build Sample Folder (Py)</span>
+            <span>Sample Site (Py)</span>
           </button>
         </div>
       </div>
@@ -727,12 +1258,10 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
               <div className="self-center max-w-md p-6 text-center space-y-3">
                 <FolderPlus className="w-8 h-8 mx-auto text-neutral-400" />
                 <h4 className="text-sm font-semibold text-[#0d0d0d] dark:text-white">
-                  No renderable folder yet
+                  No renderable folder yet in &ldquo;{workspaceId}&rdquo;
                 </h4>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                  Click <strong>Build Sample Folder (Py)</strong> above to generate{' '}
-                  <code>site/index.html</code>, <code>site/style.css</code>, and{' '}
-                  <code>site/app.js</code> using Python, upload a local folder, or import a repository from <strong>GitHub</strong>.
+                  Click <strong>Mod/Tool Workflow</strong> or <strong>Sample Site (Py)</strong> above to generate multi-file folders with Python, save blocks straight from chat with <strong>To Folder</strong>, or import from <strong>GitHub</strong>.
                 </p>
               </div>
             ) : (
@@ -757,11 +1286,13 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
           {/* File Explorer Sidebar */}
           <div className="sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-neutral-200 dark:border-white/10 bg-[#fafafa] dark:bg-[#1c1d21] flex flex-col max-h-48 sm:max-h-none">
             <div className="px-3 py-2 border-b border-neutral-200 dark:border-white/10 flex items-center justify-between text-xs">
-              <span className="font-semibold text-[#0d0d0d] dark:text-white">Workspace</span>
+              <span className="font-semibold text-[#0d0d0d] dark:text-white truncate">
+                {workspaceId}
+              </span>
               <button
                 type="button"
                 onClick={() => setShowNewFileRow((v) => !v)}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-200/80 dark:bg-white/10 text-[11px] font-medium text-[#0d0d0d] dark:text-white"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-200/80 dark:bg-white/10 text-[11px] font-medium text-[#0d0d0d] dark:text-white shrink-0"
               >
                 <Plus className="w-3 h-3" />
                 <span>File</span>
@@ -769,7 +1300,10 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
             </div>
 
             {showNewFileRow && (
-              <form onSubmit={handleCreateNewFile} className="p-2 border-b border-neutral-200 dark:border-white/10 flex gap-1">
+              <form
+                onSubmit={handleCreateNewFile}
+                className="p-2 border-b border-neutral-200 dark:border-white/10 flex gap-1"
+              >
                 <input
                   type="text"
                   value={newFilePathInput}
@@ -819,13 +1353,13 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
               })}
               {files.length === 0 && (
                 <p className="p-2 text-[11px] text-neutral-500">
-                  Run a Python script or add files to populate this sandbox folder.
+                  Run a Python/Node script, click Mod/Tool Workflow, or save a block from chat.
                 </p>
               )}
             </div>
           </div>
 
-          {/* Code Editor + Script Output */}
+          {/* Code Editor + Script/Workflow Output */}
           <div className="flex-1 min-h-0 flex flex-col bg-[#0d0d0d] text-[#ececec]">
             <div className="px-3 py-2 border-b border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 min-w-0">
@@ -848,26 +1382,79 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
                   onClick={handleSaveCurrentFile}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-white/15 text-xs font-medium text-neutral-200 hover:bg-white/10"
                 >
-                  {saveSuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Save className="w-3.5 h-3.5" />}
+                  {saveSuccess ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
                   <span>{saveSuccess ? 'Saved' : 'Save'}</span>
                 </button>
-                {/\.(py|js|ts|sh)$/i.test(activeFilePath) && (
+                {activeFilePath === 'folio.workflow.json' ? (
                   <button
                     type="button"
-                    onClick={() => handleRunScript()}
+                    onClick={handleRunWorkflow}
                     disabled={isRunningScript}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-500 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-500 disabled:opacity-50"
                   >
                     {isRunningScript ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <Workflow className="w-3.5 h-3.5" />
                     )}
-                    <span>Run Script in Folder</span>
+                    <span>Run Pipeline</span>
                   </button>
+                ) : (
+                  /\.(py|js|ts|sh)$/i.test(activeFilePath) && (
+                    <button
+                      type="button"
+                      onClick={() => handleRunScript()}
+                      disabled={isRunningScript}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      {isRunningScript ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                      )}
+                      <span>Run in Folder</span>
+                    </button>
+                  )
                 )}
               </div>
             </div>
+
+            {/* Workspace AI Direct Automation Bar */}
+            <form
+              onSubmit={handleRunWorkspaceAi}
+              className="px-3 py-2 border-b border-white/10 bg-[#14161b] flex flex-wrap items-center gap-2 text-xs"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <input
+                type="text"
+                value={aiPromptInput}
+                onChange={(e) => setAiPromptInput(e.target.value)}
+                placeholder="Ask Workspace AI to create, refactor, or scaffold files directly in this folder..."
+                className="flex-1 min-w-[180px] h-7 rounded-md border border-white/15 bg-[#1b1c22] px-2.5 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-sky-500"
+              />
+              <button
+                type="submit"
+                disabled={isRunningAi || !aiPromptInput.trim()}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-sky-600 text-white text-xs font-medium hover:bg-sky-500 disabled:opacity-50 whitespace-nowrap shrink-0"
+              >
+                {isRunningAi ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                <span>Run AI</span>
+              </button>
+              {aiStatusMsg && (
+                <span className="w-full text-[11px] text-emerald-400">{aiStatusMsg}</span>
+              )}
+              {aiError && (
+                <span className="w-full text-[11px] text-red-400">{aiError}</span>
+              )}
+            </form>
 
             <textarea
               value={editorText}
@@ -879,19 +1466,57 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
               className="flex-1 w-full resize-none bg-transparent p-3 font-mono text-xs leading-relaxed text-[#ececec] focus:outline-none chat-scroll"
             />
 
-            {(execStdout || execStderr || execExitCode !== null) && (
-              <div className="max-h-40 border-t border-white/10 bg-[#121316] p-2.5 font-mono text-xs overflow-y-auto chat-scroll space-y-1">
-                <div className="flex items-center justify-between text-[11px] text-neutral-400">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Terminal className="w-3.5 h-3.5" />
-                    {execRuntime} {execExitCode !== null ? `· Exit ${execExitCode}` : ''}
-                  </span>
-                </div>
-                {execStdout && (
-                  <pre className="whitespace-pre-wrap text-emerald-300 m-0">{execStdout}</pre>
-                )}
-                {execStderr && (
-                  <pre className="whitespace-pre-wrap text-red-400 m-0">{execStderr}</pre>
+            {(workflowResults || execStdout || execStderr || execExitCode !== null) && (
+              <div className="max-h-48 border-t border-white/10 bg-[#121316] p-2.5 font-mono text-xs overflow-y-auto chat-scroll space-y-2">
+                {workflowResults ? (
+                  workflowResults.map((step, idx) => (
+                    <div
+                      key={`${step.name}-${idx}`}
+                      className="rounded-lg border border-white/10 bg-black/30 p-2 space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-white">
+                          {idx + 1}. {step.name}
+                        </span>
+                        <span
+                          className={
+                            step.exitCode === 0 ? 'text-emerald-400' : 'text-red-400'
+                          }
+                        >
+                          {step.runtime} · Exit {step.exitCode} ({step.durationMs}ms)
+                        </span>
+                      </div>
+                      {step.stdout && (
+                        <pre className="whitespace-pre-wrap text-emerald-300 m-0 text-[11px]">
+                          {step.stdout}
+                        </pre>
+                      )}
+                      {step.stderr && (
+                        <pre className="whitespace-pre-wrap text-red-400 m-0 text-[11px]">
+                          {step.stderr}
+                        </pre>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between text-[11px] text-neutral-400">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Terminal className="w-3.5 h-3.5" />
+                        {execRuntime} {execExitCode !== null ? `· Exit ${execExitCode}` : ''}
+                      </span>
+                    </div>
+                    {execStdout && (
+                      <pre className="whitespace-pre-wrap text-emerald-300 m-0">
+                        {execStdout}
+                      </pre>
+                    )}
+                    {execStderr && (
+                      <pre className="whitespace-pre-wrap text-red-400 m-0">
+                        {execStderr}
+                      </pre>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -908,10 +1533,10 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
                 <Github className="w-4 h-4 text-[#0d0d0d] dark:text-white" />
                 <div>
                   <h4 className="text-xs font-semibold text-[#0d0d0d] dark:text-white">
-                    GitHub Account &amp; Repo Script Runner
+                    GitHub Account (Pull, Create Repo &amp; Commit/Push)
                   </h4>
                   <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    Connect via OAuth for private repos or import any public GitHub repository URL directly.
+                    Connect via OAuth to push &ldquo;{workspaceId}&rdquo;, create new repos, or access private repos.
                   </p>
                 </div>
               </div>
@@ -961,41 +1586,163 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
               </a>
             )}
 
+            {ghMessage && (
+              <div className="rounded-lg border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#15171b] px-3 py-2 text-xs text-neutral-700 dark:text-neutral-200 flex flex-wrap items-center justify-between gap-2">
+                <span>{ghMessage}</span>
+                {lastPushResult && (
+                  <a
+                    href={lastPushResult.commitUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 font-medium hover:underline"
+                  >
+                    <span>View Commit ({lastPushResult.commitSha.slice(0, 7)})</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+            )}
+
             {ghRepos.length > 0 && (
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
-                  Your Connected Repositories
+                  Your Repositories (click to select for Import / Push)
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto chat-scroll">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto chat-scroll">
                   {ghRepos.map((repo) => (
-                    <button
+                    <div
                       key={repo.id}
-                      type="button"
-                      onClick={() => {
-                        setGhRepoInput(repo.full_name);
-                        setGhBranchInput(repo.default_branch);
-                        void handleImportGitHubRepo(repo.full_name);
-                      }}
-                      className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#15171b] text-left hover:border-blue-500/50 transition-colors"
+                      className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#15171b]"
                     >
-                      <span className="truncate text-xs font-mono text-[#0d0d0d] dark:text-white">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGhRepoInput(repo.full_name);
+                          setGhBranchInput(repo.default_branch);
+                          setPushRepoInput(repo.full_name);
+                          setPushBranchInput(repo.default_branch);
+                        }}
+                        className="truncate text-xs font-mono text-[#0d0d0d] dark:text-white text-left hover:underline flex-1"
+                      >
                         {repo.full_name}
-                      </span>
+                      </button>
                       <span className="text-[10px] text-neutral-500 shrink-0">
                         {repo.private ? 'Private' : 'Public'}
                       </span>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
           </section>
 
+          {/* Create New GitHub Repo + Commit & Push Project */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <form
+              onSubmit={handleCreateGitHubRepo}
+              className="rounded-xl border border-neutral-200 dark:border-white/10 bg-[#fafafa] dark:bg-[#202227] p-3.5 space-y-2.5"
+            >
+              <h4 className="text-xs font-semibold text-[#0d0d0d] dark:text-white flex items-center gap-1.5">
+                <Plus className="w-4 h-4 text-emerald-500" />
+                <span>Create New GitHub Repo</span>
+              </h4>
+              <input
+                type="text"
+                value={newRepoName}
+                onChange={(e) => setNewRepoName(e.target.value)}
+                placeholder="repo-name (e.g. my-voxel-mod)"
+                className="w-full h-8 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#14161a] px-2.5 text-xs font-mono text-[#0d0d0d] dark:text-white"
+              />
+              <input
+                type="text"
+                value={newRepoDesc}
+                onChange={(e) => setNewRepoDesc(e.target.value)}
+                placeholder="Description (optional)"
+                className="w-full h-8 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#14161a] px-2.5 text-xs text-[#0d0d0d] dark:text-white"
+              />
+              <div className="flex items-center justify-between gap-2 pt-0.5">
+                <label className="inline-flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newRepoPrivate}
+                    onChange={(e) => setNewRepoPrivate(e.target.checked)}
+                    className="rounded border-neutral-300"
+                  />
+                  <span>Private repo</span>
+                </label>
+                <button
+                  type="submit"
+                  disabled={isCreatingRepo}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] text-xs font-medium hover:opacity-90 disabled:opacity-50"
+                >
+                  {isCreatingRepo && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Create Repo</span>
+                </button>
+              </div>
+            </form>
+
+            <form
+              onSubmit={handlePushToGitHub}
+              className="rounded-xl border border-neutral-200 dark:border-white/10 bg-[#fafafa] dark:bg-[#202227] p-3.5 space-y-2.5"
+            >
+              <h4 className="text-xs font-semibold text-[#0d0d0d] dark:text-white flex items-center gap-1.5">
+                <GitBranch className="w-4 h-4 text-emerald-500" />
+                <span>Commit &amp; Push &ldquo;{workspaceId}&rdquo;</span>
+              </h4>
+              <div className="grid grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={pushRepoInput}
+                  onChange={(e) => setPushRepoInput(e.target.value)}
+                  placeholder="owner/repo"
+                  className="col-span-2 h-8 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#14161a] px-2.5 text-xs font-mono text-[#0d0d0d] dark:text-white"
+                />
+                <input
+                  type="text"
+                  value={pushBranchInput}
+                  onChange={(e) => setPushBranchInput(e.target.value)}
+                  placeholder="main"
+                  className="h-8 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#14161a] px-2.5 text-xs font-mono text-[#0d0d0d] dark:text-white"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={pushMessageInput}
+                  onChange={(e) => setPushMessageInput(e.target.value)}
+                  placeholder="Commit message"
+                  className="col-span-2 h-8 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#14161a] px-2.5 text-xs text-[#0d0d0d] dark:text-white"
+                />
+                <input
+                  type="text"
+                  value={pushSubpathInput}
+                  onChange={(e) => setPushSubpathInput(e.target.value)}
+                  placeholder="subfolder"
+                  className="h-8 rounded-lg border border-neutral-200 dark:border-white/15 bg-white dark:bg-[#14161a] px-2.5 text-xs font-mono text-[#0d0d0d] dark:text-white"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isPushingGh}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  {isPushingGh ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <GitBranch className="w-3.5 h-3.5" />
+                  )}
+                  <span>Commit &amp; Push ({files.length} files)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
           {/* Direct Repo Importer */}
           <section className="rounded-xl border border-neutral-200 dark:border-white/10 bg-[#fafafa] dark:bg-[#202227] p-3.5 space-y-2.5">
             <h4 className="text-xs font-semibold text-[#0d0d0d] dark:text-white flex items-center gap-1.5">
               <FolderGit2 className="w-4 h-4 text-blue-500" />
-              <span>Clone / Import GitHub Folder into Sandbox</span>
+              <span>Clone / Import GitHub Folder into &ldquo;{workspaceId}&rdquo;</span>
             </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
@@ -1036,22 +1783,18 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
                 )}
                 <span>Import Repo Folder</span>
               </button>
-
-              {ghMessage && (
-                <span className="text-xs text-neutral-600 dark:text-neutral-300">{ghMessage}</span>
-              )}
             </div>
           </section>
 
           {/* Runnable Scripts Found in Imported Folder */}
           <section className="rounded-xl border border-neutral-200 dark:border-white/10 bg-[#fafafa] dark:bg-[#202227] p-3.5 space-y-2.5">
             <h4 className="text-xs font-semibold text-[#0d0d0d] dark:text-white">
-              Runnable Scripts in Sandbox Folder ({runnableScripts.length})
+              Runnable Scripts in &ldquo;{workspaceId}&rdquo; ({runnableScripts.length})
             </h4>
 
             {runnableScripts.length === 0 ? (
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                No <code>.py</code>, <code>.js</code>, <code>.ts</code>, or <code>.sh</code> scripts in the workspace yet. Import a GitHub repo or create a script on the Files tab.
+                No <code>.py</code>, <code>.js</code>, <code>.ts</code>, or <code>.sh</code> scripts yet. Import a repo, run <strong>Mod/Tool Workflow</strong>, or save scripts from chat.
               </p>
             ) : (
               <div className="space-y-1.5">
@@ -1071,7 +1814,7 @@ export const FolderSandboxPanel: React.FC<FolderSandboxPanelProps> = ({
                       type="button"
                       onClick={() => void handleRunScript(script.path)}
                       disabled={isRunningScript}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 text-white text-[11px] font-medium hover:bg-emerald-500 shrink-0"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 text-white text-[11px] font-medium hover:bg-emerald-500 disabled:opacity-50 shrink-0"
                     >
                       <Play className="w-3 h-3 fill-current" />
                       <span>Run</span>

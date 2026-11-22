@@ -12,6 +12,26 @@
     font-family: var(--font-sans);
   }
 
+  html[data-font-preset='studio-sans'] {
+    --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+    --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  html[data-font-preset='geometric-outfit'] {
+    --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+    --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  html[data-font-preset='editorial-serif'] {
+    --font-display: "Fraunces", "Playfair Display", Georgia, serif;
+    --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  html[data-font-preset='technical-mono'] {
+    --font-display: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    --font-sans: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  }
+
   .dark body {
     letter-spacing: 0.005em;
   }
@@ -42,6 +62,48 @@
 
 .dark .chat-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.28);
+}
+
+@keyframes folioOxygenReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes folioSquirclePulse {
+  0% {
+    border-radius: 11px;
+    transform: scale(1) rotate(0deg);
+  }
+  45% {
+    border-radius: 14px;
+    transform: scale(1.06) rotate(90deg);
+  }
+  100% {
+    border-radius: 9999px;
+    transform: scale(1) rotate(180deg);
+  }
+}
+
+.folio-oxygen-entrance {
+  animation: folioOxygenReveal 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.folio-squircle-btn {
+  border-radius: 11px;
+  transition: border-radius 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 0.15s ease;
+}
+
+.folio-squircle-btn[data-open='true'] {
+  border-radius: 9999px;
+  animation: folioSquirclePulse 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {

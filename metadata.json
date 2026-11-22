@@ -1,6 +1,6 @@
 {
   "name": "Folio",
-  "description": "A focused conversational workspace for drafting, reasoning, and exploring ideas.",
+  "description": "Folio v4.1 Folio Zero — Multi-engine creative studio with EVO 3D, Godot 4 CLI, CMake/MSVC/Kotlin toolchains, Blender CLI, Mod Studio, Reverse Engineering, and Neo 4 Python Rule AI.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

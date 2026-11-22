@@ -49,6 +49,7 @@ import { SandpackWorkbench } from './SandpackWorkbench';
 import { InlineStopMotionPlayer } from './InlineStopMotionPlayer';
 import { InlinePixelArtViewer } from './InlinePixelArtViewer';
 import { InlineThreeJsViewer } from './InlineThreeJsViewer';
+import { InlineChartViewer, InlineQuizViewer } from './InlineRichMedia';
 import {
   PublishSandboxResult,
   canPublishOnlineSandbox,
@@ -56,6 +57,7 @@ import {
 } from '../utils/sandboxOnline';
 import { DesignSystemStudio } from './DesignSystemStudio';
 import { FolderSandboxPanel } from './FolderSandboxPanel';
+import { studioLogger, StudioLogEntry, StudioLogSeverity } from '../utils/studioLogger';
 import { DesignSystemConfig } from '../types/designSystem';
 import {
   DEFAULT_DESIGN_SYSTEM,
@@ -66,7 +68,18 @@ import {
 } from '../utils/designSystem';
 
 const DESIGN_SYSTEM_STORAGE_KEY = 'folio-design-system-v1';
+const ACTIVE_WORKSPACE_STORAGE_KEY = 'folio-active-workspace-v1';
 const DEFAULT_WORKSPACE_ID = 'folio-sandbox-1';
+
+function loadInitialWorkspaceId(): string {
+  try {
+    const raw = localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY);
+    if (raw && /^[a-zA-Z0-9_-]{3,64}$/.test(raw)) return raw;
+  } catch {
+    // Ignore storage read error
+  }
+  return DEFAULT_WORKSPACE_ID;
+}
 
 function loadInitialDesignSystem(): DesignSystemConfig {
   try {
@@ -89,6 +102,8 @@ export interface CodePreviewData {
   id: string;
   code: string;
   language: string;
+  initialViewMode?: 'preview' | 'folder' | 'design';
+  toastMessage?: string;
 }
 
 interface ConsoleEntry {
@@ -186,7 +201,178 @@ function JsonNode({
       )}
     </div>
   );
-}
+};
+
+const StudioLogsViewer: React.FC = () => {
+  const [logs, setLogs] = useState<StudioLogEntry[]>(() => studioLogger.getSnapshot());
+  const [filter, setFilter] = useState<'all' | StudioLogSeverity>('all');
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    return studioLogger.subscribe(() => {
+      setLogs([...studioLogger.getSnapshot()]);
+    });
+  }, []);
+
+  const counts = useMemo(() => {
+    return {
+      all: logs.length,
+      log: logs.filter((l) => l.severity === 'log').length,
+      warn: logs.filter((l) => l.severity === 'warn').length,
+      error: logs.filter((l) => l.severity === 'error').length,
+      success: logs.filter((l) => l.severity === 'success').length,
+    };
+  }, [logs]);
+
+  const filtered = useMemo(() => {
+    return logs.filter((entry) => {
+      if (filter !== 'all' && entry.severity !== filter) return false;
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        return (
+          entry.message.toLowerCase().includes(q) ||
+          entry.source.toLowerCase().includes(q) ||
+          (entry.details && entry.details.toLowerCase().includes(q))
+        );
+      }
+      return true;
+    });
+  }, [logs, filter, search]);
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 bg-[#0d0d0d] text-white">
+      {/* Top Filter Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-white/10 bg-[#141518]">
+        <div className="flex items-center gap-1.5 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setFilter('all')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              filter === 'all'
+                ? 'bg-white/20 text-white'
+                : 'text-neutral-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            All ({counts.all})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter('log')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              filter === 'log'
+                ? 'bg-sky-500/30 text-sky-300 border border-sky-500/40'
+                : 'text-sky-400/80 hover:text-sky-300 hover:bg-sky-500/10'
+            }`}
+          >
+            Log ({counts.log})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter('warn')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              filter === 'warn'
+                ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
+                : 'text-amber-400/80 hover:text-amber-300 hover:bg-amber-500/10'
+            }`}
+          >
+            Warn ({counts.warn})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter('error')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              filter === 'error'
+                ? 'bg-red-500/30 text-red-300 border border-red-500/40'
+                : 'text-red-400/80 hover:text-red-300 hover:bg-red-500/10'
+            }`}
+          >
+            Error ({counts.error})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter('success')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              filter === 'success'
+                ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/40'
+                : 'text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-500/10'
+            }`}
+          >
+            Success ({counts.success})
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            placeholder="Search logs..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="px-2.5 py-1 text-xs rounded-lg bg-white/5 border border-white/10 text-white placeholder-neutral-500 focus:outline-none focus:border-white/30 w-36 sm:w-48"
+          />
+          <button
+            type="button"
+            onClick={() => studioLogger.clear()}
+            className="px-2.5 py-1 rounded-lg text-xs text-neutral-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      {/* Log list */}
+      <div className="flex-1 overflow-y-auto font-mono text-xs p-3 space-y-1.5 chat-scroll">
+        {filtered.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-neutral-500 text-xs py-12">
+            No studio logs recorded yet.
+          </div>
+        ) : (
+          filtered.map((entry) => (
+            <div
+              key={entry.id}
+              className={`p-2.5 rounded-xl border flex flex-col gap-1 transition-colors ${
+                entry.severity === 'error'
+                  ? 'bg-red-950/25 border-red-900/40 text-red-200'
+                  : entry.severity === 'warn'
+                  ? 'bg-amber-950/25 border-amber-900/40 text-amber-200'
+                  : entry.severity === 'success'
+                  ? 'bg-emerald-950/25 border-emerald-900/40 text-emerald-200'
+                  : 'bg-white/5 border-white/10 text-neutral-300'
+              }`}
+            >
+              <div className="flex items-center justify-between text-[11px] opacity-75">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-1.5 py-0.5 rounded font-semibold uppercase text-[10px] ${
+                      entry.severity === 'error'
+                        ? 'bg-red-500/20 text-red-400'
+                        : entry.severity === 'warn'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : entry.severity === 'success'
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-sky-500/20 text-sky-400'
+                    }`}
+                  >
+                    {entry.severity}
+                  </span>
+                  <span className="font-semibold text-neutral-400">[{entry.source}]</span>
+                </div>
+                <span className="tabular-nums">
+                  {new Date(entry.timestamp).toLocaleTimeString()}
+                </span>
+              </div>
+              <div className="whitespace-pre-wrap break-words">{entry.message}</div>
+              {entry.details && (
+                <pre className="mt-1 p-2 rounded-lg bg-black/40 text-[10.5px] overflow-x-auto text-neutral-400 whitespace-pre-wrap">
+                  {entry.details}
+                </pre>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
   preview,
@@ -198,7 +384,7 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
     normalizeLanguage(preview.language, preview.code)
   );
   const [viewMode, setViewMode] = useState<
-    'preview' | 'split' | 'code' | 'sandpack' | 'folder' | 'design'
+    'preview' | 'split' | 'code' | 'sandpack' | 'folder' | 'design' | 'logs'
   >(() => {
     const norm = normalizeLanguage(preview.language, preview.code);
     return getPreviewCategory(norm) === 'sandpack' || hasThirdPartyImports(preview.code)
@@ -246,6 +432,8 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
 
   // Design System, Procedural Seed & Upload/Download JSON state
   const [designSystem, setDesignSystem] = useState<DesignSystemConfig>(loadInitialDesignSystem);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>(loadInitialWorkspaceId);
+  const [folderRefreshNonce, setFolderRefreshNonce] = useState<number>(0);
   const [varsBarOpen, setVarsBarOpen] = useState(false);
   const [jsonToast, setJsonToast] = useState<string | null>(null);
   const [workspaceSnapshot, setWorkspaceSnapshot] = useState<
@@ -264,18 +452,35 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
   }, [designSystem]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
     setCode(preview.code);
     const normalized = normalizeLanguage(preview.language, preview.code);
     setLanguage(normalized);
-    const shouldDefaultSandpack =
-      getPreviewCategory(normalized) === 'sandpack' || hasThirdPartyImports(preview.code);
-    setViewMode(shouldDefaultSandpack ? 'sandpack' : 'preview');
+    if (preview.initialViewMode) {
+      setViewMode(preview.initialViewMode);
+    } else {
+      const shouldDefaultSandpack =
+        getPreviewCategory(normalized) === 'sandpack' || hasThirdPartyImports(preview.code);
+      setViewMode(shouldDefaultSandpack ? 'sandpack' : 'preview');
+    }
+    if (preview.toastMessage) {
+      setJsonToast(preview.toastMessage);
+      setTimeout(() => setJsonToast(null), 2600);
+    }
     setIframeUrlMode(false);
     setExecResult(null);
     setExecError(null);
     setJsHasDomOutput(false);
     setRunCounter((c) => c + 1);
-  }, [preview.id, preview.code, preview.language]);
+    setFolderRefreshNonce((n) => n + 1);
+  }, [preview.id, preview.code, preview.language, preview.initialViewMode, preview.toastMessage]);
 
   const category = useMemo(() => getPreviewCategory(language), [language]);
   const nativeSupported = useMemo(() => isNativeExecutable(language), [language]);
@@ -328,6 +533,7 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
       viewMode === 'code' ||
       viewMode === 'folder' ||
       viewMode === 'design' ||
+      viewMode === 'logs' ||
       isSandpackActive
     ) {
       return;
@@ -598,7 +804,7 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
         setCode(parsed.code);
       }
       if (parsed.workspaceFiles && parsed.workspaceFiles.length > 0) {
-        await fetch(`/api/workspace/${encodeURIComponent(DEFAULT_WORKSPACE_ID)}/files`, {
+        await fetch(`/api/workspace/${encodeURIComponent(activeWorkspaceId)}/files`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -606,6 +812,7 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
             files: parsed.workspaceFiles,
           }),
         });
+        setFolderRefreshNonce((n) => n + 1);
       }
       setRunCounter((c) => c + 1);
       setJsonToast(`Loaded ${file.name}`);
@@ -727,6 +934,21 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
             >
               <Palette className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Design</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'logs'}
+              onClick={() => setViewMode('logs')}
+              title="Studio Logs: Log | Warn | Error | Success live events"
+              className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                viewMode === 'logs'
+                  ? 'bg-white dark:bg-[#383838] text-[#0d0d0d] dark:text-white shadow-xs'
+                  : 'text-neutral-600 dark:text-neutral-400 hover:text-[#0d0d0d] dark:hover:text-white'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Logs</span>
             </button>
           </div>
 
@@ -1142,11 +1364,15 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
 
         {viewMode === 'folder' && (
           <FolderSandboxPanel
-            workspaceId={DEFAULT_WORKSPACE_ID}
+            workspaceId={activeWorkspaceId}
+            onChangeWorkspaceId={setActiveWorkspaceId}
             designSystem={designSystem}
+            refreshSignal={folderRefreshNonce}
             onWorkspaceFilesSnapshot={setWorkspaceSnapshot}
           />
         )}
+
+        {viewMode === 'logs' && <StudioLogsViewer />}
 
         {isSandpackActive && (
           <SandpackWorkbench
@@ -1550,6 +1776,20 @@ export const CodePreviewPanel: React.FC<CodePreviewPanelProps> = ({
             {category === 'threejs' && (
               <div className="flex-1 overflow-y-auto p-4 bg-white dark:bg-[#1a1a1a] chat-scroll">
                 <InlineThreeJsViewer code={code} compact={false} />
+              </div>
+            )}
+
+            {/* Interactive Chart */}
+            {category === 'chart' && (
+              <div className="flex-1 overflow-y-auto p-4 bg-white dark:bg-[#1a1a1a] chat-scroll">
+                <InlineChartViewer code={code} compact={false} />
+              </div>
+            )}
+
+            {/* Interactive Quiz */}
+            {category === 'quiz' && (
+              <div className="flex-1 overflow-y-auto p-4 bg-white dark:bg-[#1a1a1a] chat-scroll">
+                <InlineQuizViewer code={code} />
               </div>
             )}
 

@@ -3,19 +3,20 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Code2,
   Copy,
   Download,
+  Film,
   Grid3X3,
-  Maximize2,
   Paintbrush,
   Pause,
   Play,
-  RotateCw,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { PixelArtFrame, PixelArtSpec } from '../types/pixelArt';
+import { PixelArtSpec } from '../types/pixelArt';
 import {
+  exportPixelArtGif,
   parsePixelArtCode,
   pixelArtToPngBlob,
   pixelArtToSvg,
@@ -26,6 +27,48 @@ interface InlinePixelArtViewerProps {
   code: string;
   compact?: boolean;
   onOpenInStudio?: (spec: PixelArtSpec) => void;
+}
+
+function getDefaultZoom(w: number, compact: boolean): number {
+  if (w >= 256) return 1;
+  if (w >= 128) return 2;
+  if (w >= 64) return 4;
+  return compact ? 8 : 10;
+}
+
+function exportPixelArtXml(spec: PixelArtSpec): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<pixelart format="${esc(spec.format || 'pixelart/v3')}" title="${esc(spec.title || 'Pixel Art')}" width="${spec.width}" height="${spec.height}" fps="${spec.fps || 8}" loop="${spec.loop !== false}">`,
+  ];
+  if (spec.shaders && spec.shaders.length > 0) {
+    lines.push('  <shaders>');
+    spec.shaders.forEach((sh) => {
+      lines.push(`    <shader type="${esc(sh.type)}" intensity="${sh.intensity ?? 0.5}" />`);
+    });
+    lines.push('  </shaders>');
+  }
+  lines.push('  <frames>');
+  spec.frames.forEach((f, idx) => {
+    const svg = pixelArtToSvg(f, spec.width, spec.height).replace(/\]\]>/g, ']]]]><![CDATA[>');
+    lines.push(`    <frame index="${idx}" hold="${f.hold || 1}"><![CDATA[${svg}]]></frame>`);
+  });
+  lines.push('  </frames>');
+  lines.push('</pixelart>');
+  return lines.join('\n');
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
@@ -40,7 +83,9 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [fps, setFps] = useState<number>(() => spec?.fps || 8);
   const [showGrid, setShowGrid] = useState<boolean>(false);
-  const [zoomLevel, setZoomLevel] = useState<number>(compact ? 8 : 10);
+  const [zoomLevel, setZoomLevel] = useState<number>(() =>
+    getDefaultZoom(spec?.width || 32, compact)
+  );
   const [copiedColor, setCopiedColor] = useState<string | null>(null);
   const [copiedSvg, setCopiedSvg] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -53,7 +98,8 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
     setFps(spec.fps || 8);
     setFrameIndex(0);
     setIsPlaying(spec.frames.length > 1);
-  }, [spec]);
+    setZoomLevel(getDefaultZoom(spec.width || 32, compact));
+  }, [spec, compact]);
 
   // Animation scheduler
   useEffect(() => {
@@ -120,15 +166,25 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
 
   const frames = spec.frames;
   const currentFrame = frames[frameIndex] || frames[0];
+  const maxZoom = spec.width >= 256 ? 4 : spec.width >= 128 ? 8 : 24;
 
-  // Palette extract
-  const uniqueColors = Array.from(
-    new Set(
-      currentFrame.pixels.filter(
-        (c) => c && c.trim() && c.toLowerCase() !== 'transparent'
-      )
-    )
-  );
+  // Cap unique palette swatch sampling so 512x512 gradients stay responsive
+  const uniqueColors = useMemo(() => {
+    const set = new Set<string>();
+    for (let i = 0; i < currentFrame.pixels.length; i += 1) {
+      const c = currentFrame.pixels[i];
+      if (c && c.trim() && c.toLowerCase() !== 'transparent') {
+        set.add(c);
+        if (set.size >= 48) break;
+      }
+    }
+    return Array.from(set);
+  }, [currentFrame]);
+
+  const slug = (spec.title || 'pixel-art')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
 
   const handleCopyColor = async (color: string) => {
     try {
@@ -155,25 +211,40 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
     if (isExporting) return;
     setIsExporting(true);
     try {
-      const blob = await pixelArtToPngBlob(currentFrame, spec.width, spec.height, 16);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${(spec.title || 'pixel-art').toLowerCase().replace(/\s+/g, '-')}-${spec.width}x${spec.height}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const targetScale = spec.width >= 256 ? 2 : spec.width >= 128 ? 4 : 16;
+      const blob = await pixelArtToPngBlob(currentFrame, spec.width, spec.height, targetScale);
+      triggerDownload(blob, `${slug || 'pixel-art'}-${spec.width}x${spec.height}.png`);
     } finally {
       setIsExporting(false);
     }
+  };
+
+  const handleDownloadGif = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      const targetScale = spec.width >= 256 ? 1 : spec.width >= 128 ? 2 : 8;
+      const blob = await exportPixelArtGif(frames, spec.width, spec.height, fps, targetScale);
+      triggerDownload(blob, `${slug || 'pixel-art'}-${fps}fps.gif`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDownloadXml = () => {
+    const xml = exportPixelArtXml(spec);
+    triggerDownload(new Blob([xml], { type: 'application/xml;charset=utf-8' }), `${slug || 'pixel-art'}.xml`);
+  };
+
+  const handleDownloadJson = () => {
+    triggerDownload(new Blob([code], { type: 'application/json;charset=utf-8' }), `${slug || 'pixel-art'}.json`);
   };
 
   return (
     <div className="border-t border-neutral-200 dark:border-white/10 bg-[#f9f9f9] dark:bg-[#161616] text-[#0d0d0d] dark:text-[#ececec]">
       {/* Sub-bar */}
       <div className="px-3 py-1.5 border-b border-neutral-200 dark:border-white/10 bg-[#f0f0f0] dark:bg-[#1f1f1f] flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2 text-neutral-600 dark:text-neutral-300 tabular-nums">
+        <div className="flex flex-wrap items-center gap-2 text-neutral-600 dark:text-neutral-300 tabular-nums">
           <span className="font-medium text-[#0d0d0d] dark:text-white">
             {spec.title || 'Pixel Art'}
           </span>
@@ -182,7 +253,13 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
             {spec.width}×{spec.height}
           </span>
           <span aria-hidden="true">·</span>
-          <span>{uniqueColors.length} colors</span>
+          <span>{uniqueColors.length >= 48 ? '48+' : uniqueColors.length} colors</span>
+          {spec.shaders && spec.shaders.length > 0 && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{spec.shaders.map((s) => s.type).join(' + ')}</span>
+            </>
+          )}
           {frames.length > 1 && (
             <>
               <span aria-hidden="true">·</span>
@@ -193,7 +270,7 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex flex-wrap items-center gap-1 shrink-0">
           {onOpenInStudio && (
             <button
               type="button"
@@ -219,11 +296,44 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
             type="button"
             onClick={handleDownloadPng}
             disabled={isExporting}
-            title="Download crisp 16× upscaled PNG"
+            title="Download crisp upscaled PNG"
             className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-neutral-300 dark:border-white/15 text-[11px] font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200/70 dark:hover:bg-white/10 disabled:opacity-40 transition-colors whitespace-nowrap shrink-0"
           >
             <Download className="w-3 h-3" />
             <span>PNG</span>
+          </button>
+
+          {frames.length > 1 && (
+            <button
+              type="button"
+              onClick={() => void handleDownloadGif()}
+              disabled={isExporting}
+              title="Download animated GIF"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-neutral-300 dark:border-white/15 text-[11px] font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200/70 dark:hover:bg-white/10 disabled:opacity-40 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Film className="w-3 h-3" />
+              <span>GIF</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleDownloadXml}
+            title="Download XML specification"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-neutral-300 dark:border-white/15 text-[11px] font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200/70 dark:hover:bg-white/10 transition-colors whitespace-nowrap shrink-0"
+          >
+            <Code2 className="w-3 h-3" />
+            <span>XML</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDownloadJson}
+            title="Download JSON specification"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-neutral-300 dark:border-white/15 text-[11px] font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200/70 dark:hover:bg-white/10 transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-3 h-3" />
+            <span>JSON</span>
           </button>
         </div>
       </div>
@@ -232,7 +342,7 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
       <div className="p-4 bg-neutral-100/90 dark:bg-[#121212] flex flex-col items-center justify-center gap-3">
         <div
           ref={canvasContainerRef}
-          className="relative max-w-full overflow-auto p-4 rounded-xl border border-neutral-300 dark:border-white/15 bg-neutral-900 shadow-inner flex items-center justify-center"
+          className="relative max-w-full max-h-[540px] overflow-auto p-4 rounded-xl border border-neutral-300 dark:border-white/15 bg-neutral-900 shadow-inner flex items-center justify-center"
           style={{
             backgroundImage:
               'linear-gradient(45deg, #18181b 25%, transparent 25%), linear-gradient(-45deg, #18181b 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #18181b 75%), linear-gradient(-45deg, transparent 75%, #18181b 75%)',
@@ -257,26 +367,28 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
         {/* Viewport Toolbar: Zoom, Grid & Animation */}
         <div className="w-full max-w-md flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setShowGrid((g) => !g)}
-              aria-pressed={showGrid}
-              title="Toggle pixel grid lines"
-              className={`inline-flex items-center gap-1 h-7 px-2 rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                showGrid
-                  ? 'bg-neutral-200 dark:bg-[#333] text-[#0d0d0d] dark:text-white font-medium'
-                  : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200/60 dark:hover:bg-white/10'
-              }`}
-            >
-              <Grid3X3 className="w-3.5 h-3.5" />
-              <span>Grid</span>
-            </button>
+            {spec.width < 256 && (
+              <button
+                type="button"
+                onClick={() => setShowGrid((g) => !g)}
+                aria-pressed={showGrid}
+                title="Toggle pixel grid lines"
+                className={`inline-flex items-center gap-1 h-7 px-2 rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                  showGrid
+                    ? 'bg-neutral-200 dark:bg-[#333] text-[#0d0d0d] dark:text-white font-medium'
+                    : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200/60 dark:hover:bg-white/10'
+                }`}
+              >
+                <Grid3X3 className="w-3.5 h-3.5" />
+                <span>Grid</span>
+              </button>
+            )}
 
             <div className="inline-flex items-center rounded-md bg-neutral-200/80 dark:bg-[#262626] p-0.5">
               <button
                 type="button"
-                onClick={() => setZoomLevel((z) => Math.max(2, z - 2))}
-                disabled={zoomLevel <= 2}
+                onClick={() => setZoomLevel((z) => Math.max(1, z - (z <= 4 ? 1 : 2)))}
+                disabled={zoomLevel <= 1}
                 aria-label="Zoom out"
                 className="w-6 h-6 inline-flex items-center justify-center rounded text-neutral-600 dark:text-neutral-300 hover:bg-white dark:hover:bg-white/10 disabled:opacity-40"
               >
@@ -287,8 +399,8 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
               </span>
               <button
                 type="button"
-                onClick={() => setZoomLevel((z) => Math.min(24, z + 2))}
-                disabled={zoomLevel >= 24}
+                onClick={() => setZoomLevel((z) => Math.min(maxZoom, z + (z < 4 ? 1 : 2)))}
+                disabled={zoomLevel >= maxZoom}
                 aria-label="Zoom in"
                 className="w-6 h-6 inline-flex items-center justify-center rounded text-neutral-600 dark:text-neutral-300 hover:bg-white dark:hover:bg-white/10 disabled:opacity-40"
               >
@@ -314,7 +426,7 @@ export const InlinePixelArtViewer: React.FC<InlinePixelArtViewerProps> = ({
                 type="button"
                 onClick={() => setIsPlaying((p) => !p)}
                 aria-label={isPlaying ? 'Pause' : 'Play'}
-                className="px-2 py-1 rounded bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] text-[11px] font-medium inline-flex items-center gap-1"
+                className="px-2 py-1 rounded bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] text-[11px] font-medium inline-flex items-center gap-1 whitespace-nowrap shrink-0"
               >
                 {isPlaying ? <Pause className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
                 <span>{isPlaying ? 'Pause' : 'Play'}</span>

@@ -1,15 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, Copy, EyeOff, Globe, Maximize2, Play } from 'lucide-react';
+import { Check, Code2, Copy, EyeOff, FolderPlus, Globe, Maximize2, Play } from 'lucide-react';
 import { InlineCodeSandbox } from './InlineCodeSandbox';
 import { InlineStopMotionPlayer } from './InlineStopMotionPlayer';
 import { InlinePixelArtViewer } from './InlinePixelArtViewer';
 import { InlineThreeJsViewer } from './InlineThreeJsViewer';
-import { getPreviewCategory, normalizeLanguage } from '../utils/codePreview';
+import { InlineHybridViewer } from './InlineHybridViewer';
+import { InlineEvoViewer } from './InlineEvoViewer';
+import { InlineChartViewer, InlineQuizViewer } from './InlineRichMedia';
+import { getPreviewCategory, isMediaCodeCategory, normalizeLanguage } from '../utils/codePreview';
+import { HybridEngineKind } from '../utils/hybridEngines';
+import { slugifyHeading } from '../utils/textFormatting';
 import { VectorStopMotionSpec } from '../types/stopMotion';
 import { PixelArtSpec } from '../types/pixelArt';
 import { ThreeDSceneSpec } from '../types/threeD';
+
+function extractChildrenText(node: React.ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractChildrenText).join('');
+  if (React.isValidElement(node)) {
+    const props = node.props as { children?: React.ReactNode };
+    return extractChildrenText(props.children);
+  }
+  return '';
+}
 
 const AUTO_EMBED_CATEGORIES = new Set([
   'html',
@@ -25,6 +40,13 @@ const AUTO_EMBED_CATEGORIES = new Set([
   'stopmotion',
   'pixelart',
   'threejs',
+  'evo',
+  'chart',
+  'quiz',
+  'liquidmotion',
+  'liquiddrop',
+  'pixelmotion',
+  'motiondrop',
 ]);
 
 interface CodeBlockProps {
@@ -33,6 +55,7 @@ interface CodeBlockProps {
   isStreaming?: boolean;
   autoEmbedLive?: boolean;
   onPreviewCode?: (code: string, language: string) => void;
+  onSaveCodeToFolder?: (code: string, language: string) => void;
   onOpenStopMotionSpec?: (spec: VectorStopMotionSpec) => void;
   onOpenPixelArtSpec?: (spec: PixelArtSpec) => void;
   onOpenThreeDSpec?: (spec: ThreeDSceneSpec) => void;
@@ -44,6 +67,7 @@ function CodeBlock({
   isStreaming = false,
   autoEmbedLive = false,
   onPreviewCode,
+  onSaveCodeToFolder,
   onOpenStopMotionSpec,
   onOpenPixelArtSpec,
   onOpenThreeDSpec,
@@ -72,20 +96,39 @@ function CodeBlock({
     [normalizedLang]
   );
 
+  const isMediaBlock = isMediaCodeCategory(category);
   const canInlineSandbox = !isPlainText && category !== 'markdown';
   const shouldAutoEmbed =
-    (autoEmbedLive || category === 'stopmotion' || category === 'pixelart' || category === 'threejs') &&
+    (autoEmbedLive ||
+      category === 'stopmotion' ||
+      category === 'pixelart' ||
+      category === 'threejs' ||
+      category === 'evo' ||
+      category === 'chart' ||
+      category === 'quiz' ||
+      category === 'liquidmotion' ||
+      category === 'liquiddrop' ||
+      category === 'pixelmotion' ||
+      category === 'motiondrop') &&
     !isStreaming &&
     canInlineSandbox &&
     AUTO_EMBED_CATEGORIES.has(category);
 
   const [inlineOpen, setInlineOpen] = useState<boolean>(shouldAutoEmbed);
+  const [codeExpanded, setCodeExpanded] = useState<boolean>(() => !isMediaBlock);
+  const userToggledCodeRef = useRef(false);
 
   useEffect(() => {
     if (!userToggledRef.current && shouldAutoEmbed) {
       setInlineOpen(true);
     }
   }, [shouldAutoEmbed]);
+
+  useEffect(() => {
+    if (!userToggledCodeRef.current) {
+      setCodeExpanded(!isMediaBlock);
+    }
+  }, [isMediaBlock]);
 
   const handleCopy = async () => {
     try {
@@ -129,20 +172,54 @@ function CodeBlock({
                 <>
                   <Play className="w-3 h-3 fill-current" />
                   <span>
-                    {category === 'stopmotion'
-                      ? 'Stop Motion'
-                      : category === 'pixelart'
-                      ? 'Pixel Art'
-                      : category === 'threejs'
-                      ? '3D Scene'
-                      : category === 'sandpack'
-                      ? 'Sandpack'
-                      : isExecutableLabel
-                      ? 'Run'
-                      : 'Live Iframe'}
+                      category === 'stopmotion'
+                        ? 'Stop Motion'
+                        : category === 'pixelart'
+                        ? 'Pixel Art'
+                        : category === 'threejs'
+                        ? '3D Scene'
+                        : category === 'evo'
+                        ? 'EVO 3D'
+                        : category === 'chart'
+                        ? 'Chart'
+                        : category === 'quiz'
+                        ? 'Quiz'
+                        : category === 'liquidmotion'
+                        ? 'Liquid Motion'
+                        : category === 'liquiddrop'
+                        ? 'Liquid Drop'
+                        : category === 'pixelmotion'
+                        ? 'Pixel Motion'
+                        : category === 'motiondrop'
+                        ? 'Motion Drop'
+                        : category === 'sandpack'
+                        ? 'Sandpack'
+                        : isExecutableLabel
+                        ? 'Run'
+                        : 'Live Iframe'
                   </span>
                 </>
               )}
+            </button>
+          )}
+
+          {isMediaBlock && (
+            <button
+              type="button"
+              onClick={() => {
+                userToggledCodeRef.current = true;
+                setCodeExpanded((v) => !v);
+              }}
+              aria-expanded={codeExpanded}
+              title={codeExpanded ? 'Collapse source code' : 'Expand source code'}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 whitespace-nowrap shrink-0 ${
+                codeExpanded
+                  ? 'bg-white/15 text-white'
+                  : 'text-neutral-300 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              <Code2 className="w-3 h-3" />
+              <span>{codeExpanded ? 'Hide Code' : 'Show Code'}</span>
             </button>
           )}
 
@@ -156,6 +233,19 @@ function CodeBlock({
             >
               <Maximize2 className="w-3 h-3" />
               <span className="hidden sm:inline">Workbench</span>
+            </button>
+          )}
+
+          {onSaveCodeToFolder && !isStreaming && (
+            <button
+              type="button"
+              onClick={() => onSaveCodeToFolder(editedValue, language || '')}
+              aria-label="Save code block into active project folder"
+              title="Save into active project folder (run or push to GitHub)"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-neutral-300 hover:text-white hover:bg-white/10 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 whitespace-nowrap shrink-0"
+            >
+              <FolderPlus className="w-3 h-3" />
+              <span className="hidden sm:inline">To Folder</span>
             </button>
           )}
 
@@ -180,9 +270,17 @@ function CodeBlock({
         </div>
       </div>
 
-      <pre className="overflow-x-auto p-4 text-[13.5px] leading-relaxed font-mono chat-scroll">
-        <code>{value}</code>
-      </pre>
+      {codeExpanded ? (
+        <pre className="overflow-x-auto p-4 text-[13.5px] leading-relaxed font-mono chat-scroll">
+          <code>{value}</code>
+        </pre>
+      ) : (
+        isStreaming && (
+          <div className="px-4 py-2 text-xs text-neutral-400 font-mono">
+            Generating {category} media spec ({value.split('\n').length} lines)…
+          </div>
+        )
+      )}
 
       {inlineOpen && !isStreaming && canInlineSandbox && (
         category === 'stopmotion' ? (
@@ -199,6 +297,21 @@ function CodeBlock({
           <InlineThreeJsViewer
             code={editedValue}
             onOpenInStudio={onOpenThreeDSpec}
+          />
+        ) : category === 'evo' ? (
+          <InlineEvoViewer code={editedValue} />
+        ) : category === 'chart' ? (
+          <InlineChartViewer code={editedValue} />
+        ) : category === 'quiz' ? (
+          <InlineQuizViewer code={editedValue} />
+        ) : category === 'liquidmotion' ||
+          category === 'liquiddrop' ||
+          category === 'pixelmotion' ||
+          category === 'motiondrop' ? (
+          <InlineHybridViewer
+            kind={category as HybridEngineKind}
+            code={editedValue}
+            onOpenStopMotionSpec={onOpenStopMotionSpec}
           />
         ) : (
           <InlineCodeSandbox
@@ -218,6 +331,7 @@ interface MarkdownRendererProps {
   isStreaming?: boolean;
   autoEmbedLive?: boolean;
   onPreviewCode?: (code: string, language: string) => void;
+  onSaveCodeToFolder?: (code: string, language: string) => void;
   onOpenStopMotionSpec?: (spec: VectorStopMotionSpec) => void;
   onOpenPixelArtSpec?: (spec: PixelArtSpec) => void;
   onOpenThreeDSpec?: (spec: ThreeDSceneSpec) => void;
@@ -229,6 +343,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   isStreaming = false,
   autoEmbedLive = false,
   onPreviewCode,
+  onSaveCodeToFolder,
   onOpenStopMotionSpec,
   onOpenPixelArtSpec,
   onOpenThreeDSpec,
@@ -239,21 +354,39 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: ({ children }) => (
-            <h1 className="font-display text-2xl font-semibold tracking-tight text-[#0d0d0d] dark:text-white mt-6 mb-3 first:mt-0">
-              {children}
-            </h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="font-display text-xl font-semibold tracking-tight text-[#0d0d0d] dark:text-white mt-6 mb-2.5 first:mt-0">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="font-display text-lg font-semibold text-[#0d0d0d] dark:text-white mt-5 mb-2 first:mt-0">
-              {children}
-            </h3>
-          ),
+          h1: ({ children }) => {
+            const txt = extractChildrenText(children);
+            return (
+              <h1
+                id={`h-${slugifyHeading(txt)}`}
+                className="scroll-mt-20 font-display text-2xl font-semibold tracking-tight text-[#0d0d0d] dark:text-white mt-6 mb-3 first:mt-0"
+              >
+                {children}
+              </h1>
+            );
+          },
+          h2: ({ children }) => {
+            const txt = extractChildrenText(children);
+            return (
+              <h2
+                id={`h-${slugifyHeading(txt)}`}
+                className="scroll-mt-20 font-display text-xl font-semibold tracking-tight text-[#0d0d0d] dark:text-white mt-6 mb-2.5 first:mt-0"
+              >
+                {children}
+              </h2>
+            );
+          },
+          h3: ({ children }) => {
+            const txt = extractChildrenText(children);
+            return (
+              <h3
+                id={`h-${slugifyHeading(txt)}`}
+                className="scroll-mt-20 font-display text-lg font-semibold text-[#0d0d0d] dark:text-white mt-5 mb-2 first:mt-0"
+              >
+                {children}
+              </h3>
+            );
+          },
           p: ({ children }) => (
             <p className="mb-4 last:mb-0">{children}</p>
           ),
@@ -342,6 +475,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   isStreaming={isStreaming}
                   autoEmbedLive={autoEmbedLive}
                   onPreviewCode={onPreviewCode}
+                  onSaveCodeToFolder={onSaveCodeToFolder}
                   onOpenStopMotionSpec={onOpenStopMotionSpec}
                   onOpenPixelArtSpec={onOpenPixelArtSpec}
                   onOpenThreeDSpec={onOpenThreeDSpec}

@@ -65,3 +65,39 @@ export interface GitHubRepoSummary {
   html_url: string;
   updated_at?: string;
 }
+
+export interface WorkspaceSummary {
+  id: string;
+  fileCount: number;
+  entryFolders: string[];
+  hasWorkflow: boolean;
+  updatedAt: number;
+}
+
+export interface WorkflowStep {
+  name?: string;
+  language?: string;
+  filePath?: string;
+  code?: string;
+}
+
+export interface WorkflowStepResult {
+  name: string;
+  runtime: string;
+  exitCode: number;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+export interface GitHubPushResult {
+  owner: string;
+  repo: string;
+  branch: string;
+  commitSha: string;
+  commitUrl: string;
+  repoUrl: string;
+  pushedCount: number;
+}
+
