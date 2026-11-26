@@ -11,7 +11,8 @@
     "start": "node --import tsx server.ts",
     "build": "vite build",
     "lint": "tsc --noEmit",
-    "folio": "tsx scripts/folio-cli.ts"
+    "folio": "tsx scripts/folio-cli.ts",
+    "deploy:cloudrun": "bash scripts/deploy-gcloud.sh"
   },
   "dependencies": {
     "@codesandbox/sandpack-react": "^2.20.0",

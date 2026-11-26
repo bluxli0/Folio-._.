@@ -1,0 +1,11 @@
+.gcloudignore
+.git
+.gitignore
+node_modules/
+dist/
+.folio-data/models/
+.folio-data/llama/
+.folio-data/backups/
+.folio-data/workspaces/
+*.log
+.DS_Store

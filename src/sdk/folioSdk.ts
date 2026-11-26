@@ -1,8 +1,32 @@
 import { FOLIO_CHANGELOGS, FOLIO_CURRENT_VERSION, type ChangelogEntry } from '../data/changelogs';
 import { FOLIO_DOCS_SECTIONS, searchFolioDocs, type FolioDocSection } from '../data/folioDocs';
+import {
+  CHRONO_SINGULARITY_EVO_SPEC,
+  ENGINE_DATASETS,
+  searchEngineDatasets,
+  type EngineDataset,
+  type EngineDatasetExample,
+  type EngineDatasetId,
+  type EngineParameterSpec,
+} from '../data/engineDatasets';
 
-export { FOLIO_CHANGELOGS, FOLIO_CURRENT_VERSION, FOLIO_DOCS_SECTIONS, searchFolioDocs };
-export type { ChangelogEntry, FolioDocSection };
+export {
+  CHRONO_SINGULARITY_EVO_SPEC,
+  ENGINE_DATASETS,
+  FOLIO_CHANGELOGS,
+  FOLIO_CURRENT_VERSION,
+  FOLIO_DOCS_SECTIONS,
+  searchEngineDatasets,
+  searchFolioDocs,
+};
+export type {
+  ChangelogEntry,
+  EngineDataset,
+  EngineDatasetExample,
+  EngineDatasetId,
+  EngineParameterSpec,
+  FolioDocSection,
+};
 
 export const FOLIO_SDK_VERSION = '4.2.0';
 
@@ -145,8 +169,26 @@ export class FolioClient {
     return res.json();
   }
 
+  async restoreLlm(): Promise<{ ok: boolean; installed?: boolean; model?: string; message?: string }> {
+    const res = await fetch(this.url('/api/system/restore-llm'), { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `LLM restore failed (${res.status})`);
+    return data;
+  }
+
   getDocs(query?: string): FolioDocSection[] {
     return query ? searchFolioDocs(query) : FOLIO_DOCS_SECTIONS;
+  }
+
+  getDatasets(query?: string, engineId?: EngineDatasetId): EngineDataset[] {
+    return query || engineId ? searchEngineDatasets(query || '', engineId) : ENGINE_DATASETS;
+  }
+
+  async trainDatasets(): Promise<{ ok: boolean; ingestedFacts?: number; docsSections?: number }> {
+    const res = await fetch(this.url('/api/datasets/train'), { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Dataset training failed (${res.status})`);
+    return data;
   }
 
   getChangelog(): ChangelogEntry[] {
@@ -157,11 +199,19 @@ export class FolioClient {
 export function createEvoScene(input: {
   title: string;
   nodes: Array<Record<string, unknown>>;
+  ikChains?: Array<Record<string, unknown>>;
+  forceFields?: Array<Record<string, unknown>>;
+  triggers?: Array<Record<string, unknown>>;
+  groups?: Record<string, Record<string, unknown>>;
+  storyboard?: Record<string, unknown>;
+  camera?: Record<string, unknown>;
   environment?: string;
   background?: string;
-  starfield?: boolean;
+  starfield?: boolean | number | { count?: number; radius?: number; color?: string };
   gridFloor?: boolean;
   contactShadows?: boolean;
+  fog?: boolean | Record<string, unknown>;
+  exposure?: number;
   durationSec?: number;
   fps?: number;
   audio?: Record<string, unknown>;
@@ -180,7 +230,15 @@ export function createEvoScene(input: {
     starfield: input.starfield ?? true,
     gridFloor: input.gridFloor ?? true,
     contactShadows: input.contactShadows ?? true,
+    ...(input.camera ? { camera: input.camera } : {}),
+    ...(input.fog !== undefined ? { fog: input.fog } : {}),
+    ...(input.exposure !== undefined ? { exposure: input.exposure } : {}),
+    ...(input.groups ? { groups: input.groups } : {}),
     nodes: input.nodes,
+    ...(input.ikChains ? { ikChains: input.ikChains } : {}),
+    ...(input.forceFields ? { forceFields: input.forceFields } : {}),
+    ...(input.triggers ? { triggers: input.triggers } : {}),
+    ...(input.storyboard ? { storyboard: input.storyboard } : {}),
     ...(input.audio ? { audio: input.audio } : {}),
   };
 }
@@ -244,6 +302,7 @@ export function createPixelArtScene(input: {
 export function createThreeJsScene(input: {
   title: string;
   objects: Array<Record<string, unknown>>;
+  ikChains?: Array<Record<string, unknown>>;
   environment?: string;
   background?: string;
   starfield?: boolean;
@@ -261,6 +320,7 @@ export function createThreeJsScene(input: {
     starfield: input.starfield ?? true,
     gridFloor: input.gridFloor ?? true,
     objects: input.objects,
+    ...(input.ikChains ? { ikChains: input.ikChains } : {}),
     ...(input.audio ? { audio: input.audio } : {}),
   };
 }

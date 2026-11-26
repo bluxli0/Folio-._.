@@ -30,6 +30,10 @@ export type EvoGeometryType =
   | 'graph'
   | 'surface'
   | 'curve'
+  | 'terrain'
+  | 'metaball'
+  | 'customMesh'
+  | 'ikJoint'
   | 'group';
 
 export type EvoEasingName = string;
@@ -119,7 +123,7 @@ export interface EvoMaterialSpec {
   envMapIntensity?: number;
   emissive?: string;
   emissiveIntensity?: number;
-  emissivePulse?: { min?: number; max?: number; freq?: number };
+  emissivePulse?: boolean | number | { min?: number; max?: number; freq?: number };
   outlineColor?: string;
   opacity?: number;
   wireframe?: boolean;
@@ -154,10 +158,99 @@ export interface EvoPhysicsSpec {
   isStatic?: boolean;
 }
 
+export interface EvoModifierSpec {
+  type: 'bend' | 'twist' | 'taper' | 'wave' | 'noise' | 'squash' | 'mirror';
+  axis?: 'x' | 'y' | 'z';
+  strength?: number | string;
+  angle?: number | string;
+  frequency?: number | string;
+  speed?: number | string;
+}
+
+export interface EvoConstraintSpec {
+  type: 'trackTo' | 'copyRotation' | 'copyLocation' | 'limitDistance';
+  targetId?: string;
+  target?: string;
+  influence?: number;
+  offset?: [number, number, number];
+  minDist?: number;
+  maxDist?: number;
+  maxDistance?: number;
+}
+
+export interface EvoPathFollowSpec {
+  points: Array<[number, number, number]>;
+  closed?: boolean;
+  orientToPath?: boolean;
+  speed?: number;
+  ease?: EvoEasingName;
+}
+
+export interface EvoMorphTargetSpec {
+  name?: string;
+  scale?: [number, number, number];
+  twist?: number;
+  bend?: number;
+  bulge?: number;
+  weight: number | string;
+}
+
+export interface EvoSoftBodySpec {
+  enabled?: boolean;
+  stiffness?: number;
+  damping?: number;
+  wobble?: number;
+  squash?: number;
+  squashOnBounce?: number;
+}
+
+export interface EvoForceFieldSpec {
+  id?: string;
+  type: 'attractor' | 'repulsor' | 'vortex';
+  position?: [number, number, number];
+  strength?: number;
+  radius?: number;
+}
+
+export interface EvoTriggerZoneSpec {
+  id?: string;
+  position?: [number, number, number];
+  radius?: number;
+  size?: [number, number, number];
+  targetId?: string;
+  action?: 'pulse' | 'bounce' | 'glow' | 'reverse';
+  show?: boolean;
+  color?: string;
+}
+
+export interface EvoActionStripSpec {
+  name?: string;
+  start: number;
+  end: number;
+  blend?: number;
+  motion: EvoMotionSpec;
+}
+
+export interface EvoIkChainSpec {
+  id?: string;
+  nodes: string[];
+  targetId?: string;
+  target?: string | [number, number, number];
+  targetPos?: [number, number, number] | { x?: number | string; y?: number | string; z?: number | string };
+  pole?: [number, number, number];
+  iterations?: number;
+  segmentLengths?: number[];
+  aimNodes?: boolean;
+  aimBones?: boolean;
+  damping?: number;
+}
+
 export interface EvoNodeSpec {
   id?: string;
   idLink?: string;
   type?: EvoGeometryType;
+  geometry?: EvoGeometryType;
+  shape?: EvoGeometryType;
   size?: number | [number, number, number];
   radius?: number;
   tube?: number;
@@ -169,6 +262,18 @@ export interface EvoNodeSpec {
   material?: EvoMaterialSpec;
   motion?: EvoMotionSpec;
   keyframes?: EvoKeyframeSpec[];
+  actionStrips?: EvoActionStripSpec[];
+  modifiers?: EvoModifierSpec[];
+  morphTargets?: EvoMorphTargetSpec[];
+  constraints?: EvoConstraintSpec[];
+  pathFollow?: EvoPathFollowSpec;
+  softBody?: EvoSoftBodySpec;
+  forceField?: EvoForceFieldSpec;
+  triggerZone?: EvoTriggerZoneSpec;
+  meshData?: {
+    vertices: Array<[number, number, number]>;
+    faces?: Array<[number, number, number]>;
+  };
   hitbox?: EvoHitboxSpec;
   physics?: EvoPhysicsSpec;
   follow?: {
@@ -212,6 +317,7 @@ export interface EvoStoryboardShot {
   name?: string;
   start: number; // 0..1 normalized
   end: number;
+  duration?: number;
   cameraCut?: 'wide' | 'medium' | 'closeup' | 'dutch' | 'overhead' | 'orbit';
   position?: [number, number, number];
   target?: [number, number, number];
@@ -262,12 +368,13 @@ export interface EvoSceneSpec {
   background: string;
   environment: EvoEnvironmentPreset;
   fog?: boolean | { color?: string; density?: number };
-  starfield?: boolean | number;
+  starfield?: boolean | number | { count?: number; radius?: number; color?: string };
   exposure?: number;
   camera?: {
     fov?: number;
     position?: [number, number, number];
     target?: [number, number, number];
+    exposure?: number;
     autoRotate?: boolean;
     autoRotateSpeed?: number;
   };
@@ -277,6 +384,9 @@ export interface EvoSceneSpec {
   pixelLayer?: Record<string, unknown>;
   groups?: Record<string, EvoNodeSpec>;
   nodes: EvoNodeSpec[];
+  ikChains?: EvoIkChainSpec[];
+  forceFields?: EvoForceFieldSpec[];
+  triggers?: EvoTriggerZoneSpec[];
   storyboard?: {
     script?: string;
     shots: EvoStoryboardShot[];
@@ -337,6 +447,9 @@ export function evaluateEvoMathExpr(
 
 export function evaluateEvoSpecFidelity(spec: {
   nodes: EvoNodeSpec[];
+  ikChains?: EvoIkChainSpec[];
+  forceFields?: EvoForceFieldSpec[];
+  triggers?: EvoTriggerZoneSpec[];
   storyboard?: EvoSceneSpec['storyboard'];
   pixelLayer?: Record<string, unknown>;
   audio?: MathAudioTrackSpec;
@@ -354,10 +467,23 @@ export function evaluateEvoSpecFidelity(spec: {
     notes.push(`${nodeCount} top-level node(s)`);
   }
 
-  const hasMotion = spec.nodes.some((n) => Boolean(n.motion || n.keyframes?.length));
+  const hasMotion = spec.nodes.some((n) => Boolean(n.motion || n.keyframes?.length || n.actionStrips?.length || n.pathFollow));
   if (hasMotion) {
     score += 8;
-    notes.push('Liquid-Motion math expressions / keyframes active');
+    notes.push('Liquid-Motion math expressions / keyframes / Bezier paths active');
+  }
+
+  if (spec.ikChains && spec.ikChains.length > 0) {
+    score += 6;
+    notes.push(`FABRIK Inverse Kinematics (${spec.ikChains.length} IK chain${spec.ikChains.length === 1 ? '' : 's'})`);
+  }
+
+  const hasDeformOrConstraints = spec.nodes.some((n) =>
+    Boolean(n.modifiers?.length || n.morphTargets?.length || n.constraints?.length || n.softBody)
+  );
+  if (hasDeformOrConstraints) {
+    score += 5;
+    notes.push('Blender-grade modifier stack / constraints / soft-body active');
   }
 
   if (spec.storyboard?.shots && spec.storyboard.shots.length > 0) {
@@ -375,10 +501,12 @@ export function evaluateEvoSpecFidelity(spec: {
     notes.push('Math-synthesized audio track synced to timeline');
   }
 
-  const hasPhysicsOrHitbox = spec.nodes.some((n) => Boolean(n.physics || n.hitbox));
+  const hasPhysicsOrHitbox =
+    Boolean(spec.forceFields?.length || spec.triggers?.length) ||
+    spec.nodes.some((n) => Boolean(n.physics || n.hitbox || n.forceField || n.triggerZone));
   if (hasPhysicsOrHitbox) {
     score += 5;
-    notes.push('Rigid-body physics & collision hitbox solver active');
+    notes.push('Rigid-body physics, force fields, trigger zones & collision hitboxes active');
   }
 
   notes.push(`Timeline: ${spec.durationSec}s @ ${spec.fps}fps`);
@@ -496,6 +624,24 @@ export function parseEvoCode(
     ];
   }
 
+  // Normalize node geometry aliases (type | geometry | shape) recursively
+  const normalizeNode = (n: EvoNodeSpec): EvoNodeSpec => {
+    const resolvedType = n.type || n.geometry || n.shape;
+    return {
+      ...n,
+      ...(resolvedType ? { type: resolvedType } : {}),
+      ...(Array.isArray(n.children) ? { children: n.children.map(normalizeNode) } : {}),
+    };
+  };
+  rawNodes = rawNodes.map(normalizeNode);
+
+  const normalizedGroups: Record<string, EvoNodeSpec> | undefined =
+    parsedObj.groups && typeof parsedObj.groups === 'object'
+      ? Object.fromEntries(
+          Object.entries(parsedObj.groups as Record<string, EvoNodeSpec>).map(([k, v]) => [k, normalizeNode(v)])
+        )
+      : undefined;
+
   const title =
     typeof parsedObj.title === 'string' && parsedObj.title.trim()
       ? parsedObj.title.trim()
@@ -512,10 +658,43 @@ export function parseEvoCode(
     typeof parsedObj.fps === 'number' && parsedObj.fps >= 1 && parsedObj.fps <= 60
       ? Math.round(parsedObj.fps)
       : 30;
+
+  const rawStoryboard = parsedObj.storyboard as EvoSceneSpec['storyboard'] | undefined;
+  let inferredShotDuration = 0;
+  if (rawStoryboard && Array.isArray(rawStoryboard.shots) && rawStoryboard.shots.length > 0) {
+    for (const sh of rawStoryboard.shots) {
+      if (typeof sh.duration === 'number' && sh.duration > 0) {
+        inferredShotDuration += sh.duration;
+      }
+    }
+  }
+
   const durationSec =
     typeof parsedObj.durationSec === 'number' && parsedObj.durationSec > 0
       ? Math.min(600, parsedObj.durationSec)
-      : 4;
+      : inferredShotDuration > 0
+      ? Math.min(600, inferredShotDuration)
+      : 6;
+
+  let storyboard = rawStoryboard;
+  if (rawStoryboard && Array.isArray(rawStoryboard.shots) && rawStoryboard.shots.length > 0) {
+    const needsNorm = rawStoryboard.shots.some(
+      (sh) => typeof sh.start !== 'number' || typeof sh.end !== 'number'
+    );
+    if (needsNorm) {
+      const total = inferredShotDuration > 0 ? inferredShotDuration : rawStoryboard.shots.length;
+      let acc = 0;
+      const normShots = rawStoryboard.shots.map((sh) => {
+        const d = inferredShotDuration > 0 && typeof sh.duration === 'number' && sh.duration > 0 ? sh.duration : 1;
+        const start = typeof sh.start === 'number' ? sh.start : acc / total;
+        const end = typeof sh.end === 'number' ? sh.end : (acc + d) / total;
+        acc += d;
+        return { ...sh, start, end };
+      });
+      storyboard = { ...rawStoryboard, shots: normShots };
+    }
+  }
+
   const background =
     typeof parsedObj.background === 'string' && parsedObj.background.trim()
       ? parsedObj.background.trim()
@@ -548,11 +727,24 @@ export function parseEvoCode(
     (parsedObj.pixelArt as Record<string, unknown> | undefined) ||
     (parsedObj.pixelTexture as Record<string, unknown> | undefined);
 
-  const storyboard = parsedObj.storyboard as EvoSceneSpec['storyboard'] | undefined;
   const audio = parsedObj.audio as MathAudioTrackSpec | undefined;
+  const ikChains = Array.isArray(parsedObj.ikChains)
+    ? (parsedObj.ikChains as EvoIkChainSpec[])
+    : Array.isArray((parsedObj.scene as Record<string, unknown> | undefined)?.ikChains)
+    ? ((parsedObj.scene as Record<string, unknown>).ikChains as EvoIkChainSpec[])
+    : undefined;
+  const forceFields = Array.isArray(parsedObj.forceFields)
+    ? (parsedObj.forceFields as EvoForceFieldSpec[])
+    : undefined;
+  const triggers = Array.isArray(parsedObj.triggers)
+    ? (parsedObj.triggers as EvoTriggerZoneSpec[])
+    : undefined;
 
   const fidelity = evaluateEvoSpecFidelity({
     nodes: rawNodes,
+    ikChains,
+    forceFields,
+    triggers,
     storyboard,
     pixelLayer,
     audio,
@@ -580,8 +772,11 @@ export function parseEvoCode(
       contactShadows: parsedObj.contactShadows !== false,
       showHitboxes: parsedObj.showHitboxes === true,
       pixelLayer,
-      groups: parsedObj.groups as Record<string, EvoNodeSpec> | undefined,
+      groups: normalizedGroups,
       nodes: rawNodes,
+      ikChains,
+      forceFields,
+      triggers,
       storyboard,
       audio,
       rawJson: JSON.stringify(parsed, null, 2),

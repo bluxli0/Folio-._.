@@ -122,6 +122,7 @@ export interface ThreeDObjectSpec {
   hitboxColor?: string;
   collideColor?: string;
   physics?: ThreeDPhysicsSpec;
+  trackTo?: string;
 }
 
 export interface ThreeDVoxel {
@@ -130,6 +131,15 @@ export interface ThreeDVoxel {
   z: number;
   color: string;
   size?: number;
+}
+
+export interface ThreeDIkChainSpec {
+  id?: string;
+  nodes: string[];
+  targetId?: string;
+  targetPos?: [number, number, number];
+  iterations?: number;
+  aimNodes?: boolean;
 }
 
 export interface ThreeDSceneSpec {
@@ -149,6 +159,7 @@ export interface ThreeDSceneSpec {
   cameraFov?: number;
   exposure?: number;
   objects: ThreeDObjectSpec[];
+  ikChains?: ThreeDIkChainSpec[];
   customJsCode?: string;
   bbmodel?: Record<string, unknown>;
   voxels?: ThreeDVoxel[];

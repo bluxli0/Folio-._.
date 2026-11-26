@@ -50,6 +50,11 @@ export function parseThreeDCode(rawCode: string): { spec?: ThreeDSceneSpec; erro
         : parsed;
 
       if (!spec.objects) spec.objects = [];
+      spec.objects = spec.objects.map((o) => {
+        const anyO = o as unknown as Record<string, unknown>;
+        const resolvedShape = (o.shape || anyO.type || anyO.geometry) as ThreeDSceneSpec['objects'][number]['shape'] | undefined;
+        return resolvedShape ? { ...o, shape: resolvedShape } : o;
+      });
       if (!spec.background) spec.background = '#090d16';
       if (!spec.lighting) spec.lighting = 'studio';
       return { spec };
@@ -92,6 +97,7 @@ function sanitizeCustomThreeJsCode(raw: string): string {
 export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
   const bg = spec.background || '#090d16';
   const objectsJson = JSON.stringify(spec.objects || []).replace(/<\/script>/gi, '<\\/script>');
+  const ikChainsJson = JSON.stringify(spec.ikChains || []).replace(/<\/script>/gi, '<\\/script>');
   const bbmodelJson = spec.bbmodel
     ? JSON.stringify(spec.bbmodel).replace(/<\/script>/gi, '<\\/script>')
     : 'null';
@@ -407,6 +413,7 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
       if (setup) {
         const { scene, camera, renderer, updateOrbitCamera, getOrbitState, setOrbitYaw } = setup;
         const objectsData = ${objectsJson};
+        const ikChainsData = ${ikChainsJson};
         const showGlobalHitboxes = ${showHitboxes};
         const defaultFloorY = ${defaultFloorY};
         const hasAnyPhysics = objectsData.some((o) => (o.physics && o.physics.enabled !== false) || o.animation === 'physicsBounce');
@@ -417,6 +424,7 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
         }
 
         const meshes = [];
+        const meshById = new Map();
 
         objectsData.forEach((obj) => {
           const repCount = typeof obj.repeat === 'number'
@@ -429,7 +437,8 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
 
           for (let rIdx = 0; rIdx < repCount; rIdx += 1) {
           let geom;
-          switch (obj.shape) {
+          const resolvedShape = obj.shape || obj.type || obj.geometry || 'icosahedron';
+          switch (resolvedShape) {
             case 'box': geom = new THREE.BoxGeometry(1, 1, 1); break;
             case 'sphere': geom = new THREE.SphereGeometry(0.8, 32, 32); break;
             case 'torus': geom = new THREE.TorusGeometry(0.8, 0.3, 24, 48); break;
@@ -512,6 +521,64 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
               geom.computeVertexNormals();
               break;
             }
+            case 'klein': {
+              geom = new THREE.PlaneGeometry(1, 1, 36, 18);
+              const pos = geom.attributes.position;
+              for (let i = 0; i < pos.count; i += 1) {
+                const u = (pos.getX(i) + 0.5) * Math.PI * 2;
+                const v = (pos.getY(i) + 0.5) * Math.PI * 2;
+                const rad = 4 * (1 - Math.cos(u) / 2);
+                const x = u < Math.PI
+                  ? 6 * Math.cos(u) * (1 + Math.sin(u)) + rad * Math.cos(u) * Math.cos(v)
+                  : 6 * Math.cos(u) * (1 + Math.sin(u)) + rad * Math.cos(v + Math.PI);
+                const y = u < Math.PI
+                  ? 16 * Math.sin(u) + rad * Math.sin(u) * Math.cos(v)
+                  : 16 * Math.sin(u);
+                const z = rad * Math.sin(v);
+                pos.setXYZ(i, x * 0.06, y * 0.06, z * 0.06);
+              }
+              geom.computeVertexNormals();
+              break;
+            }
+            case 'metaball': {
+              geom = new THREE.IcosahedronGeometry(0.75, 3);
+              const pos = geom.attributes.position;
+              for (let i = 0; i < pos.count; i += 1) {
+                const vx = pos.getX(i);
+                const vy = pos.getY(i);
+                const vz = pos.getZ(i);
+                const len = Math.hypot(vx, vy, vz) || 1;
+                const nx = vx / len, ny = vy / len, nz = vz / len;
+                const disp = 1 + 0.16 * Math.sin(nx * 3.2) * Math.cos(ny * 3.2) + 0.09 * Math.sin(nz * 4.5 + nx * 2.1);
+                pos.setXYZ(i, vx * disp, vy * disp, vz * disp);
+              }
+              geom.computeVertexNormals();
+              break;
+            }
+            case 'ikJoint': geom = new THREE.CapsuleGeometry(0.24, 0.9, 8, 20); break;
+            case 'star3d': {
+              const sShape = new THREE.Shape();
+              for (let i = 0; i <= 10; i += 1) {
+                const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+                const rad = i % 2 === 0 ? 1.05 : 0.44;
+                if (i === 0) sShape.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+                else sShape.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+              }
+              geom = new THREE.ExtrudeGeometry(sShape, { depth: 0.24, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.02 });
+              geom.center();
+              break;
+            }
+            case 'lathe': {
+              const lPts = [
+                new THREE.Vector2(0.02, -0.7),
+                new THREE.Vector2(0.7, -0.45),
+                new THREE.Vector2(0.35, 0),
+                new THREE.Vector2(0.75, 0.45),
+                new THREE.Vector2(0.4, 0.7),
+              ];
+              geom = new THREE.LatheGeometry(lPts, 28);
+              break;
+            }
             case 'graphRibbon': {
               const pts = [];
               const count = 96;
@@ -526,7 +593,7 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
               geom = new THREE.TubeGeometry(curve, 96, 0.09, 14, false);
               break;
             }
-            default: geom = new THREE.BoxGeometry(1, 1, 1);
+            default: geom = new THREE.IcosahedronGeometry(0.85, 1);
           }
 
           let useVertexGradient = false;
@@ -561,7 +628,7 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
           const wireframe = Boolean(obj.wireframe);
           const flatShading = Boolean(obj.flatShading);
           const opacity = typeof obj.opacity === 'number' ? obj.opacity : 1;
-          const sideOpt = obj.shape === 'waveSurface' || obj.shape === 'terrain' || obj.shape === 'mobius' || obj.shape === 'plane' ? THREE.DoubleSide : THREE.FrontSide;
+          const sideOpt = resolvedShape === 'waveSurface' || resolvedShape === 'terrain' || resolvedShape === 'mobius' || resolvedShape === 'klein' || resolvedShape === 'plane' ? THREE.DoubleSide : THREE.FrontSide;
           const emColor = obj.emissive || '#000000';
           const emInt = obj.emissiveIntensity ?? (obj.emissive ? 0.8 : 0);
 
@@ -674,6 +741,8 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
           }
 
           mesh.userData = {
+            id: obj.id,
+            trackTo: obj.trackTo,
             anim: obj.animation || 'rotate',
             speed: obj.speed ?? 1.0,
             basePos: [mesh.position.x, mesh.position.y, mesh.position.z],
@@ -700,7 +769,20 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
           };
           scene.add(mesh);
           meshes.push(mesh);
+          if (obj.id && !meshById.has(obj.id)) meshById.set(obj.id, mesh);
           }
+        });
+
+        const ikChainLengths = new Map();
+        (ikChainsData || []).forEach((chain) => {
+          if (!chain || !Array.isArray(chain.nodes) || chain.nodes.length < 2) return;
+          const lens = [];
+          for (let k = 0; k < chain.nodes.length - 1; k += 1) {
+            const j0 = meshById.get(chain.nodes[k]);
+            const j1 = meshById.get(chain.nodes[k + 1]);
+            lens.push(j0 && j1 ? Math.max(0.1, j0.position.distanceTo(j1.position)) : 1.0);
+          }
+          ikChainLengths.set(chain, lens);
         });
 
         const clock = new THREE.Clock();
@@ -840,7 +922,54 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
             }
           }
 
+          // Solve FABRIK IK chains & trackTo constraints
+          if (Array.isArray(ikChainsData) && ikChainsData.length > 0) {
+            const upVec = new THREE.Vector3(0, 1, 0);
+            ikChainsData.forEach((chain) => {
+              if (!chain || !Array.isArray(chain.nodes) || chain.nodes.length < 2) return;
+              const joints = chain.nodes.map((id) => meshById.get(id)).filter(Boolean);
+              if (joints.length < 2) return;
+              const lens = ikChainLengths.get(chain) || joints.slice(0, -1).map(() => 1.0);
+              let tVec = joints[joints.length - 1].position.clone();
+              if (chain.targetId && meshById.get(chain.targetId)) {
+                tVec = meshById.get(chain.targetId).position.clone();
+              } else if (Array.isArray(chain.targetPos)) {
+                tVec.set(chain.targetPos[0] || 0, chain.targetPos[1] || 0, chain.targetPos[2] || 0);
+              }
+              const rootP = joints[0].position.clone();
+              const pts = joints.map((j) => j.position.clone());
+              const iters = Math.max(1, Math.min(20, chain.iterations || 8));
+              for (let it = 0; it < iters; it += 1) {
+                pts[pts.length - 1].copy(tVec);
+                for (let k = pts.length - 2; k >= 0; k -= 1) {
+                  const diff = pts[k].clone().sub(pts[k + 1]);
+                  const d = diff.length() || 1e-5;
+                  pts[k].copy(pts[k + 1]).addScaledVector(diff, lens[k] / d);
+                }
+                pts[0].copy(rootP);
+                for (let k = 0; k < pts.length - 1; k += 1) {
+                  const diff = pts[k + 1].clone().sub(pts[k]);
+                  const d = diff.length() || 1e-5;
+                  pts[k + 1].copy(pts[k]).addScaledVector(diff, lens[k] / d);
+                }
+              }
+              joints.forEach((j, k) => j.position.copy(pts[k]));
+              if (chain.aimNodes !== false) {
+                for (let k = 0; k < joints.length - 1; k += 1) {
+                  const dir = pts[k + 1].clone().sub(pts[k]);
+                  if (dir.lengthSq() > 1e-6) {
+                    joints[k].quaternion.setFromUnitVectors(upVec, dir.normalize());
+                  }
+                }
+              }
+            });
+          }
+
           meshes.forEach((m) => {
+            if (m.userData.trackTo) {
+              const target = meshById.get(m.userData.trackTo);
+              if (target) m.lookAt(target.position);
+            }
             if (m.userData.boxHelper) {
               m.userData.boxHelper.update();
               m.userData.boxHelper.material.color.copy(
@@ -887,6 +1016,48 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
       errorBanner.style.display = 'block';
       errorBanner.textContent = msg;
     }
+
+    // Shared Inverse Kinematics (IK) & Aim Helpers available to all Three.js scenes & custom scripts
+    function _ik2dSolve(tx, ty, l1, l2, bend) {
+      const a1 = Math.max(1e-4, Number(l1) || 1);
+      const a2 = Math.max(1e-4, Number(l2) || 1);
+      const dist = Math.min(a1 + a2 - 1e-4, Math.max(Math.abs(a1 - a2) + 1e-4, Math.hypot(tx, ty)));
+      const cos2 = Math.max(-1, Math.min(1, (dist * dist - a1 * a1 - a2 * a2) / (2 * a1 * a2)));
+      const sgn = Number(bend ?? 1) < 0 ? -1 : 1;
+      const t2 = sgn * Math.acos(cos2);
+      const t1 = Math.atan2(ty, tx) - Math.atan2(a2 * Math.sin(t2), a1 + a2 * Math.cos(t2));
+      return [t1, t2];
+    }
+    window.ik2d_theta1 = (tx, ty, l1, l2, bend = 1) => _ik2dSolve(tx, ty, l1, l2, bend)[0];
+    window.ik2d_theta2 = (tx, ty, l1, l2, bend = 1) => _ik2dSolve(tx, ty, l1, l2, bend)[1];
+    window.ik2d_deg1 = (tx, ty, l1, l2, bend = 1) => (_ik2dSolve(tx, ty, l1, l2, bend)[0] * 180) / Math.PI;
+    window.ik2d_deg2 = (tx, ty, l1, l2, bend = 1) => (_ik2dSolve(tx, ty, l1, l2, bend)[1] * 180) / Math.PI;
+    window.ik2d_elbow_x = (tx, ty, l1, l2, bend = 1) => Math.cos(window.ik2d_theta1(tx, ty, l1, l2, bend)) * (Number(l1) || 1);
+    window.ik2d_elbow_y = (tx, ty, l1, l2, bend = 1) => Math.sin(window.ik2d_theta1(tx, ty, l1, l2, bend)) * (Number(l1) || 1);
+    function _ik3dMid(ax, ay, az, tx, ty, tz, l1, l2, px = 0, py = 1, pz = 0) {
+      const a1 = Math.max(1e-4, Number(l1) || 1);
+      const a2 = Math.max(1e-4, Number(l2) || 1);
+      const dx = tx - ax, dy = ty - ay, dz = tz - az;
+      const rawD = Math.hypot(dx, dy, dz) || 1e-4;
+      const d = Math.min(a1 + a2 - 1e-4, Math.max(Math.abs(a1 - a2) + 1e-4, rawD));
+      const ux = dx / rawD, uy = dy / rawD, uz = dz / rawD;
+      const along = (a1 * a1 - a2 * a2 + d * d) / (2 * d);
+      const h = Math.sqrt(Math.max(0, a1 * a1 - along * along));
+      const pvx = px - ax, pvy = py - ay, pvz = pz - az;
+      const dot = pvx * ux + pvy * uy + pvz * uz;
+      let ox = pvx - dot * ux, oy = pvy - dot * uy, oz = pvz - dot * uz;
+      let oLen = Math.hypot(ox, oy, oz);
+      if (oLen < 1e-5) {
+        ox = Math.abs(uy) < 0.9 ? -uz : 1; oy = 0; oz = Math.abs(uy) < 0.9 ? ux : 0;
+        oLen = Math.hypot(ox, oy, oz) || 1;
+      }
+      return [ax + ux * along + (ox / oLen) * h, ay + uy * along + (oy / oLen) * h, az + uz * along + (oz / oLen) * h];
+    }
+    window.ik3d_mid_x = (ax, ay, az, tx, ty, tz, l1, l2, px = 0, py = 1, pz = 0) => _ik3dMid(ax, ay, az, tx, ty, tz, l1, l2, px, py, pz)[0];
+    window.ik3d_mid_y = (ax, ay, az, tx, ty, tz, l1, l2, px = 0, py = 1, pz = 0) => _ik3dMid(ax, ay, az, tx, ty, tz, l1, l2, px, py, pz)[1];
+    window.ik3d_mid_z = (ax, ay, az, tx, ty, tz, l1, l2, px = 0, py = 1, pz = 0) => _ik3dMid(ax, ay, az, tx, ty, tz, l1, l2, px, py, pz)[2];
+    window.lookat_yaw = (ax, az, tx, tz) => (Math.atan2(tx - ax, tz - az) * 180) / Math.PI;
+    window.lookat_pitch = (ax, ay, az, tx, ty, tz) => (-Math.atan2(ty - ay, Math.hypot(tx - ax, tz - az) || 1e-5) * 180) / Math.PI;
 
     function setupDefaultStudioScene() {
       if (typeof THREE === 'undefined') {

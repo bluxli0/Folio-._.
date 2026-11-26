@@ -105,7 +105,7 @@ export const ThreeDStudio: React.FC<ThreeDStudioProps> = ({
     showTempStatus(`Loaded ${demo.title}.`);
   };
 
-  const handleAddObject = (shape: ThreeDShapeType = 'box') => {
+  const handleAddObject = (shape: ThreeDShapeType = 'icosahedron') => {
     const newObj: ThreeDObjectSpec = {
       id: crypto.randomUUID(),
       shape,

@@ -464,4 +464,133 @@ export const UNIFIED_MATH_FUNCS: Record<string, (...args: number[]) => number> =
   cross2d: (ax, ay, bx, by) => ax * by - ay * bx,
   len2d: (x, y) => Math.hypot(x, y),
   manhattan: (ax, ay, bx, by) => Math.abs(ax - bx) + Math.abs(ay - by),
+
+  // Analytical 2D & 3D Inverse Kinematics (IK) + LookAt Solvers
+  ik2d_theta1: (tx, ty, l1 = 1, l2 = 1, bend = 1) => {
+    const a = Math.max(1e-4, Math.abs(l1));
+    const b = Math.max(1e-4, Math.abs(l2));
+    const minD = Math.abs(a - b) + 1e-4;
+    const maxD = a + b - 1e-4;
+    const rawD = Math.hypot(tx, ty);
+    const d = Math.max(minD, Math.min(maxD, rawD || 1e-4));
+    const baseAng = Math.atan2(ty, tx);
+    const cosAlpha = Math.max(-1, Math.min(1, (d * d + a * a - b * b) / (2 * d * a)));
+    const alpha = Math.acos(cosAlpha);
+    return baseAng + (bend >= 0 ? -alpha : alpha);
+  },
+  ik2d_theta2: (tx, ty, l1 = 1, l2 = 1, bend = 1) => {
+    const a = Math.max(1e-4, Math.abs(l1));
+    const b = Math.max(1e-4, Math.abs(l2));
+    const minD = Math.abs(a - b) + 1e-4;
+    const maxD = a + b - 1e-4;
+    const rawD = Math.hypot(tx, ty);
+    const d = Math.max(minD, Math.min(maxD, rawD || 1e-4));
+    const cosBeta = Math.max(-1, Math.min(1, (a * a + b * b - d * d) / (2 * a * b)));
+    const inner = Math.PI - Math.acos(cosBeta);
+    return bend >= 0 ? inner : -inner;
+  },
+  ik2d_deg1: (tx, ty, l1 = 1, l2 = 1, bend = 1) =>
+    (UNIFIED_MATH_FUNCS.ik2d_theta1(tx, ty, l1, l2, bend) * 180) / Math.PI,
+  ik2d_deg2: (tx, ty, l1 = 1, l2 = 1, bend = 1) =>
+    (UNIFIED_MATH_FUNCS.ik2d_theta2(tx, ty, l1, l2, bend) * 180) / Math.PI,
+  ik2d_elbow_x: (tx, ty, l1 = 1, l2 = 1, bend = 1) =>
+    Math.cos(UNIFIED_MATH_FUNCS.ik2d_theta1(tx, ty, l1, l2, bend)) * Math.max(1e-4, Math.abs(l1)),
+  ik2d_elbow_y: (tx, ty, l1 = 1, l2 = 1, bend = 1) =>
+    Math.sin(UNIFIED_MATH_FUNCS.ik2d_theta1(tx, ty, l1, l2, bend)) * Math.max(1e-4, Math.abs(l1)),
+  ik3d_mid_x: (ax, ay, az, tx, ty, tz, l1 = 1, l2 = 1, px = 0, py = 1, pz = 0) => {
+    const a = Math.max(1e-4, Math.abs(l1));
+    const b = Math.max(1e-4, Math.abs(l2));
+    const vx = tx - ax;
+    const vy = ty - ay;
+    const vz = tz - az;
+    const rawD = Math.hypot(vx, vy, vz);
+    const d = Math.max(Math.abs(a - b) + 1e-4, Math.min(a + b - 1e-4, rawD || 1e-4));
+    const invD = rawD > 1e-6 ? 1 / rawD : 1;
+    const dx = rawD > 1e-6 ? vx * invD : 1;
+    const dy = rawD > 1e-6 ? vy * invD : 0;
+    const dz = rawD > 1e-6 ? vz * invD : 0;
+    const along = (d * d + a * a - b * b) / (2 * d);
+    const h = Math.sqrt(Math.max(0, a * a - along * along));
+    const pDot = (px - ax) * dx + (py - ay) * dy + (pz - az) * dz;
+    let ox = px - ax - pDot * dx;
+    let oy = py - ay - pDot * dy;
+    let oz = pz - az - pDot * dz;
+    const oLen = Math.hypot(ox, oy, oz);
+    if (oLen < 1e-5) {
+      ox = Math.abs(dy) < 0.9 ? 0 : 1;
+      oy = Math.abs(dy) < 0.9 ? 1 : 0;
+      oz = 0;
+      const d2 = ox * dx + oy * dy + oz * dz;
+      ox -= d2 * dx;
+      oy -= d2 * dy;
+      oz -= d2 * dz;
+    }
+    const nLen = Math.hypot(ox, oy, oz) || 1;
+    return ax + dx * along + (ox / nLen) * h;
+  },
+  ik3d_mid_y: (ax, ay, az, tx, ty, tz, l1 = 1, l2 = 1, px = 0, py = 1, pz = 0) => {
+    const a = Math.max(1e-4, Math.abs(l1));
+    const b = Math.max(1e-4, Math.abs(l2));
+    const vx = tx - ax;
+    const vy = ty - ay;
+    const vz = tz - az;
+    const rawD = Math.hypot(vx, vy, vz);
+    const d = Math.max(Math.abs(a - b) + 1e-4, Math.min(a + b - 1e-4, rawD || 1e-4));
+    const invD = rawD > 1e-6 ? 1 / rawD : 1;
+    const dx = rawD > 1e-6 ? vx * invD : 1;
+    const dy = rawD > 1e-6 ? vy * invD : 0;
+    const dz = rawD > 1e-6 ? vz * invD : 0;
+    const along = (d * d + a * a - b * b) / (2 * d);
+    const h = Math.sqrt(Math.max(0, a * a - along * along));
+    const pDot = (px - ax) * dx + (py - ay) * dy + (pz - az) * dz;
+    let ox = px - ax - pDot * dx;
+    let oy = py - ay - pDot * dy;
+    let oz = pz - az - pDot * dz;
+    if (Math.hypot(ox, oy, oz) < 1e-5) {
+      ox = Math.abs(dy) < 0.9 ? 0 : 1;
+      oy = Math.abs(dy) < 0.9 ? 1 : 0;
+      oz = 0;
+      const d2 = ox * dx + oy * dy + oz * dz;
+      ox -= d2 * dx;
+      oy -= d2 * dy;
+      oz -= d2 * dz;
+    }
+    const nLen = Math.hypot(ox, oy, oz) || 1;
+    return ay + dy * along + (oy / nLen) * h;
+  },
+  ik3d_mid_z: (ax, ay, az, tx, ty, tz, l1 = 1, l2 = 1, px = 0, py = 1, pz = 0) => {
+    const a = Math.max(1e-4, Math.abs(l1));
+    const b = Math.max(1e-4, Math.abs(l2));
+    const vx = tx - ax;
+    const vy = ty - ay;
+    const vz = tz - az;
+    const rawD = Math.hypot(vx, vy, vz);
+    const d = Math.max(Math.abs(a - b) + 1e-4, Math.min(a + b - 1e-4, rawD || 1e-4));
+    const invD = rawD > 1e-6 ? 1 / rawD : 1;
+    const dx = rawD > 1e-6 ? vx * invD : 1;
+    const dy = rawD > 1e-6 ? vy * invD : 0;
+    const dz = rawD > 1e-6 ? vz * invD : 0;
+    const along = (d * d + a * a - b * b) / (2 * d);
+    const h = Math.sqrt(Math.max(0, a * a - along * along));
+    const pDot = (px - ax) * dx + (py - ay) * dy + (pz - az) * dz;
+    let ox = px - ax - pDot * dx;
+    let oy = py - ay - pDot * dy;
+    let oz = pz - az - pDot * dz;
+    if (Math.hypot(ox, oy, oz) < 1e-5) {
+      ox = Math.abs(dy) < 0.9 ? 0 : 1;
+      oy = Math.abs(dy) < 0.9 ? 1 : 0;
+      oz = 0;
+      const d2 = ox * dx + oy * dy + oz * dz;
+      ox -= d2 * dx;
+      oy -= d2 * dy;
+      oz -= d2 * dz;
+    }
+    const nLen = Math.hypot(ox, oy, oz) || 1;
+    return az + dz * along + (oz / nLen) * h;
+  },
+  lookat_yaw: (ax, az, tx, tz) => (Math.atan2(tx - ax, tz - az) * 180) / Math.PI,
+  lookat_pitch: (ax, ay, az, tx, ty, tz) => {
+    const horiz = Math.hypot(tx - ax, tz - az);
+    return (-Math.atan2(ty - ay, Math.max(1e-5, horiz)) * 180) / Math.PI;
+  },
 };

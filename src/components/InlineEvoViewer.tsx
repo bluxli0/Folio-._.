@@ -16,10 +16,15 @@ import {
   VolumeX,
 } from 'lucide-react';
 import {
+  EvoConstraintSpec,
   EvoEasingName,
+  EvoIkChainSpec,
   EvoKeyframeSpec,
   EvoMaterialPreset,
   EvoMaterialSpec,
+  EvoModifierSpec,
+  EvoMorphTargetSpec,
+  EvoMotionSpec,
   EvoNodeSpec,
   EvoSceneSpec,
   applyEvoEasing,
@@ -57,6 +62,13 @@ interface RuntimeNodeRecord {
   hitboxIdleColor: THREE.Color;
   hitboxCollideColor: THREE.Color;
   hitFlashTimer: number;
+  basePosAttr?: Float32Array;
+  baseParticleAttr?: Float32Array;
+  pathCurve?: THREE.CatmullRomCurve3;
+  triggerHelper?: THREE.LineSegments | THREE.Mesh;
+  triggerFlashTimer: number;
+  softBodySquash: number;
+  prevSimVelY: number;
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -150,7 +162,8 @@ function buildGeometry(node: EvoNodeSpec): THREE.BufferGeometry {
   const seg = Math.max(8, Math.min(96, Math.round(node.segments ?? 28)));
   const r = node.radius ?? 0.6;
   const h = node.height ?? 1.2;
-  switch (node.type) {
+  const geomType = node.type || node.geometry || node.shape || 'box';
+  switch (geomType) {
     case 'graph':
     case 'curve': {
       const g = node.graph || {};
@@ -171,26 +184,90 @@ function buildGeometry(node: EvoNodeSpec): THREE.BufferGeometry {
       const curve = new THREE.CatmullRomCurve3(pts);
       return new THREE.TubeGeometry(curve, samples, tubeR, 10, false);
     }
-    case 'surface': {
+    case 'surface':
+    case 'terrain': {
       const g = node.graph || {};
-      const segs = Math.max(12, Math.min(48, Math.round(g.samples ?? 28)));
-      const sz = Array.isArray(node.size) ? node.size : [node.size ?? 3.6, node.size ?? 3.6];
+      const segs = Math.max(12, Math.min(56, Math.round(g.samples ?? (geomType === 'terrain' ? 36 : 28))));
+      const sz = Array.isArray(node.size)
+        ? node.size
+        : [node.size ?? (geomType === 'terrain' ? 6.0 : 3.6), node.size ?? (geomType === 'terrain' ? 6.0 : 3.6)];
       const geom = new THREE.PlaneGeometry(sz[0], sz[1], segs, segs);
       geom.rotateX(-Math.PI / 2);
       const pos = geom.getAttribute('position');
+      const defaultExpr =
+        geomType === 'terrain'
+          ? '0.48 * sin(x * 1.4) * cos(z * 1.4) + 0.22 * sin(x * 3.1 + z * 2.3) + 0.1 * cos(r * 2.5)'
+          : 'sin(x * 1.8) * cos(z * 1.8) * 0.48';
       for (let i = 0; i < pos.count; i += 1) {
         const x = pos.getX(i);
         const z = pos.getZ(i);
-        const r = Math.hypot(x, z);
+        const rad = Math.hypot(x, z);
         const y = evaluateGraphPoint(
-          g.expr || g.yExpr || 'sin(x * 1.8) * cos(z * 1.8) * 0.48',
-          { x, z, r, u: x / (sz[0] || 1) + 0.5, t: 0 },
+          g.expr || g.yExpr || defaultExpr,
+          { x, z, r: rad, u: x / (sz[0] || 1) + 0.5, t: 0 },
           0
         );
         pos.setY(i, y);
       }
       geom.computeVertexNormals();
       return geom;
+    }
+    case 'metaball': {
+      const geom = new THREE.IcosahedronGeometry(r, Math.max(2, Math.min(4, Math.round((node.segments ?? 24) / 8))));
+      const pos = geom.getAttribute('position');
+      for (let i = 0; i < pos.count; i += 1) {
+        const x = pos.getX(i);
+        const y = pos.getY(i);
+        const z = pos.getZ(i);
+        const len = Math.hypot(x, y, z) || 1;
+        const nx = x / len;
+        const ny = y / len;
+        const nz = z / len;
+        const disp = 1 + 0.16 * Math.sin(nx * 3.2) * Math.cos(ny * 3.2) + 0.09 * Math.sin(nz * 4.5 + nx * 2.1);
+        pos.setXYZ(i, x * disp, y * disp, z * disp);
+      }
+      geom.computeVertexNormals();
+      return geom;
+    }
+    case 'customMesh': {
+      const md = node.meshData;
+      if (md && Array.isArray(md.vertices) && md.vertices.length >= 3) {
+        const flatVerts: number[] = [];
+        for (const v of md.vertices) {
+          if (Array.isArray(v)) {
+            flatVerts.push(Number(v[0] || 0), Number(v[1] || 0), Number(v[2] || 0));
+          } else if (typeof v === 'number') {
+            flatVerts.push(v);
+          }
+        }
+        if (flatVerts.length >= 9) {
+          const geom = new THREE.BufferGeometry();
+          geom.setAttribute('position', new THREE.Float32BufferAttribute(flatVerts, 3));
+          if (Array.isArray(md.faces) && md.faces.length > 0) {
+            const idxList: number[] = [];
+            for (const f of md.faces) {
+              if (Array.isArray(f) && f.length >= 3) {
+                const faceArr = f as number[];
+                idxList.push(Number(faceArr[0]), Number(faceArr[1]), Number(faceArr[2]));
+                if (faceArr.length >= 4) {
+                  idxList.push(Number(faceArr[0]), Number(faceArr[2]), Number(faceArr[3]));
+                }
+              } else if (typeof f === 'number') {
+                idxList.push(f);
+              }
+            }
+            if (idxList.length >= 3) {
+              geom.setIndex(idxList);
+            }
+          }
+          geom.computeVertexNormals();
+          return geom;
+        }
+      }
+      return new THREE.IcosahedronGeometry(r, 1);
+    }
+    case 'ikJoint': {
+      return new THREE.CapsuleGeometry(r * 0.28, Math.max(0.25, h * 0.72), 8, seg);
     }
     case 'sphere':
       return new THREE.SphereGeometry(r, seg, seg);
@@ -542,7 +619,7 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
     renderer.setPixelRatio(isSoftwareWebGL ? 1 : Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = spec.exposure ?? 1.1;
+    renderer.toneMappingExposure = spec.exposure ?? spec.camera?.exposure ?? 1.1;
     renderer.shadowMap.enabled = Boolean(spec.contactShadows && !isSoftwareWebGL);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -636,19 +713,27 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
 
     let starPoints: THREE.Points | null = null;
     if (spec.starfield || spec.environment === 'cosmic' || spec.environment === 'midnight') {
-      const starCount = typeof spec.starfield === 'number' ? Math.max(40, Math.min(2000, spec.starfield)) : 320;
+      const starObj = typeof spec.starfield === 'object' && spec.starfield !== null ? spec.starfield : null;
+      const starCount =
+        typeof spec.starfield === 'number'
+          ? Math.max(40, Math.min(2000, spec.starfield))
+          : starObj?.count
+          ? Math.max(40, Math.min(2000, starObj.count))
+          : 320;
+      const baseStarRad = starObj?.radius ?? 24;
+      const starColor = starObj?.color || '#e0f2fe';
       const starPos = new Float32Array(starCount * 3);
       for (let si = 0; si < starCount; si += 1) {
         const theta = (si * 2.39996) % (Math.PI * 2);
         const phi = Math.acos(1 - 2 * ((si + 0.5) / starCount));
-        const rad = 18 + (si % 11) * 1.4;
+        const rad = baseStarRad * (0.45 + 0.55 * ((si % 11) / 10));
         starPos[si * 3] = Math.sin(phi) * Math.cos(theta) * rad;
         starPos[si * 3 + 1] = Math.cos(phi) * rad * 0.7 + 2;
         starPos[si * 3 + 2] = Math.sin(phi) * Math.sin(theta) * rad;
       }
       const sg = new THREE.BufferGeometry();
       sg.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-      const sm = new THREE.PointsMaterial({ color: 0xe0f2fe, size: 0.14, transparent: true, opacity: 0.8 });
+      const sm = new THREE.PointsMaterial({ color: new THREE.Color(starColor), size: 0.14, transparent: true, opacity: 0.8 });
       starPoints = new THREE.Points(sg, sm);
       scene.add(starPoints);
     }
@@ -710,12 +795,15 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
             }
           : rawNode;
 
+      const nodeGeomType = merged.type || merged.geometry || merged.shape || 'box';
+      merged.type = nodeGeomType;
       let obj: THREE.Object3D;
-      if (merged.type === 'group') {
+      let baseParticleAttr: Float32Array | undefined;
+      if (nodeGeomType === 'group') {
         obj = new THREE.Group();
-      } else if (merged.type === 'axes3d') {
+      } else if (nodeGeomType === 'axes3d') {
         obj = new THREE.AxesHelper(merged.radius ?? 1.8);
-      } else if (merged.type === 'particles3d') {
+      } else if (nodeGeomType === 'particles3d') {
         const count = Math.max(24, Math.min(2000, Math.round(merged.count ?? 180)));
         const rad = merged.radius ?? 1.6;
         const pPos = new Float32Array(count * 3);
@@ -727,6 +815,7 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
           pPos[pi * 3 + 1] = Math.cos(phi) * rVal;
           pPos[pi * 3 + 2] = Math.sin(phi) * Math.sin(a) * rVal;
         }
+        baseParticleAttr = new Float32Array(pPos);
         const pg = new THREE.BufferGeometry();
         pg.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
         const pm = new THREE.PointsMaterial({
@@ -744,14 +833,19 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
         const rawMat = merged.material || {};
         const presetMat = rawMat.preset ? EVO_MATERIAL_PRESETS[rawMat.preset] || {} : {};
         const mSpec: EvoMaterialSpec = { ...presetMat, ...rawMat };
-        if (merged.type === 'wireCube') {
+        if (nodeGeomType === 'wireCube') {
           mSpec.wireframe = true;
         }
         const hasVertexGrad = applyVertexGradient(geom, mSpec.gradient);
         disposables.geometries.push(geom);
         const useTex = Boolean(sharedPixelTexture && mSpec.usePixelTexture !== false && (mSpec.usePixelTexture === true || !mSpec.color));
         const sideConst =
-          mSpec.side === 'double' || merged.type === 'surface' || merged.type === 'mobius' || merged.type === 'klein'
+          mSpec.side === 'double' ||
+          nodeGeomType === 'surface' ||
+          nodeGeomType === 'terrain' ||
+          nodeGeomType === 'mobius' ||
+          nodeGeomType === 'klein' ||
+          Boolean(merged.modifiers?.some((m) => m.type === 'mirror'))
             ? THREE.DoubleSide
             : mSpec.side === 'back'
             ? THREE.BackSide
@@ -785,6 +879,21 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
         if (renderer.shadowMap.enabled) {
           mesh.castShadow = true;
           mesh.receiveShadow = true;
+        }
+        const mirrorMod = merged.modifiers?.find((mod) => mod.type === 'mirror');
+        if (mirrorMod) {
+          const mirrorAxis = mirrorMod.axis || 'x';
+          const mirrorMesh = new THREE.Mesh(geom, mat);
+          mirrorMesh.scale.set(
+            mirrorAxis === 'x' ? -1 : 1,
+            mirrorAxis === 'y' ? -1 : 1,
+            mirrorAxis === 'z' ? -1 : 1
+          );
+          if (renderer.shadowMap.enabled) {
+            mirrorMesh.castShadow = true;
+            mirrorMesh.receiveShadow = true;
+          }
+          mesh.add(mirrorMesh);
         }
         obj = mesh;
       }
@@ -827,6 +936,28 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
 
       parent.add(obj);
 
+      // Preserve base vertex positions when vertex modifiers, morphTargets, or softBody deformers are enabled
+      let basePosAttr: Float32Array | undefined;
+      const needsVertexDeform = Boolean(
+        (merged.modifiers && merged.modifiers.some((mod) => mod.type !== 'mirror')) ||
+          (merged.morphTargets && merged.morphTargets.length > 0) ||
+          (merged.softBody && merged.softBody.enabled !== false)
+      );
+      if (needsVertexDeform && obj instanceof THREE.Mesh && obj.geometry) {
+        const posAttr = obj.geometry.getAttribute('position');
+        if (posAttr && posAttr.array instanceof Float32Array) {
+          basePosAttr = new Float32Array(posAttr.array);
+        }
+      }
+
+      let pathCurve: THREE.CatmullRomCurve3 | undefined;
+      if (merged.pathFollow?.points && merged.pathFollow.points.length >= 2) {
+        pathCurve = new THREE.CatmullRomCurve3(
+          merged.pathFollow.points.map(([px, py, pz]) => new THREE.Vector3(px, py, pz)),
+          Boolean(merged.pathFollow.closed)
+        );
+      }
+
       // Compute local bounding half-extents for physics & hitbox wireframes
       const halfSize = new THREE.Vector3(0.5, 0.5, 0.5);
       let hitboxRadius = 0.6;
@@ -855,7 +986,7 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
       }
 
       const hitboxShape: 'box' | 'sphere' =
-        merged.hitbox?.shape || (merged.type === 'sphere' ? 'sphere' : 'box');
+        merged.hitbox?.shape || (merged.type === 'sphere' || merged.type === 'metaball' ? 'sphere' : 'box');
       const hitboxIdleColor = new THREE.Color(merged.hitbox?.color || '#22d3ee');
       const hitboxCollideColor = new THREE.Color(merged.hitbox?.collideColor || '#f43f5e');
 
@@ -893,6 +1024,23 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
         scene.add(hitboxHelper);
       }
 
+      let triggerHelper: THREE.Mesh | undefined;
+      if (merged.triggerZone?.show) {
+        const tzRad = merged.triggerZone.radius ?? 1.4;
+        const tzg = new THREE.SphereGeometry(tzRad, 16, 12);
+        const tzm = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(merged.triggerZone.color || '#a855f7'),
+          wireframe: true,
+          transparent: true,
+          opacity: 0.45,
+        });
+        disposables.geometries.push(tzg);
+        disposables.materials.push(tzm);
+        triggerHelper = new THREE.Mesh(tzg, tzm);
+        triggerHelper.position.copy(basePos);
+        scene.add(triggerHelper);
+      }
+
       const physVel = merged.physics?.velocity || [0, 0, 0];
       const hasPhysics = Boolean(merged.physics && merged.physics.enabled !== false);
       const isStatic = Boolean(merged.physics?.isStatic);
@@ -918,6 +1066,13 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
         hitboxIdleColor,
         hitboxCollideColor,
         hitFlashTimer: 0,
+        basePosAttr,
+        baseParticleAttr,
+        pathCurve,
+        triggerHelper,
+        triggerFlashTimer: 0,
+        softBodySquash: 0,
+        prevSimVelY: physVel[1] || 0,
       };
       runtimeNodes.push(rec);
       if (merged.id && !nodeById.has(merged.id)) {
@@ -941,6 +1096,26 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
       }
     }
 
+    // Precompute default bone lengths for any FABRIK IK chains
+    const ikInitialLengths = new Map<EvoIkChainSpec, number[]>();
+    if (Array.isArray(spec.ikChains)) {
+      for (const chain of spec.ikChains) {
+        if (!Array.isArray(chain.nodes) || chain.nodes.length < 2) continue;
+        const lengths: number[] = [];
+        for (let k = 0; k < chain.nodes.length - 1; k += 1) {
+          if (Array.isArray(chain.segmentLengths) && typeof chain.segmentLengths[k] === 'number') {
+            lengths.push(Math.max(0.05, chain.segmentLengths[k]));
+          } else {
+            const j0 = nodeById.get(chain.nodes[k]);
+            const j1 = nodeById.get(chain.nodes[k + 1]);
+            const dist = j0 && j1 ? j0.basePos.distanceTo(j1.basePos) : 1.0;
+            lengths.push(Math.max(0.1, dist));
+          }
+        }
+        ikInitialLengths.set(chain, lengths);
+      }
+    }
+
     const resizeObserver = new ResizeObserver((entries) => {
       if (disposed) return;
       for (const entry of entries) {
@@ -959,9 +1134,283 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
         const v = rec.spec.physics?.velocity || [0, 0, 0];
         rec.simVel.set(v[0] || 0, v[1] || 0, v[2] || 0);
         rec.hitFlashTimer = 0;
+        rec.triggerFlashTimer = 0;
+        rec.softBodySquash = 0;
       }
     };
     resetPhysicsRef.current = resetPhysics;
+
+    const applyMotionSpec = (
+      m: EvoMotionSpec,
+      state: { px: number; py: number; pz: number; rx: number; ry: number; rz: number; sx: number; sy: number; sz: number },
+      rec: RuntimeNodeRecord,
+      effectiveT: number,
+      blend = 1
+    ) => {
+      const evalExpr = (v: number | string | undefined, fb: number) =>
+        evaluateEvoMathExpr(v, effectiveT, rec.repeatIndex, rec.repeatTotal, spec.durationSec, fb);
+      const lerpMix = (cur: number, target: number) => cur + (target - cur) * blend;
+
+      if (!rec.hasPhysics) {
+        if (m.x !== undefined) state.px = lerpMix(state.px, evalExpr(m.x, state.px));
+        if (m.y !== undefined) state.py = lerpMix(state.py, evalExpr(m.y, state.py));
+        if (m.z !== undefined) state.pz = lerpMix(state.pz, evalExpr(m.z, state.pz));
+      }
+
+      const rxExpr = m.rx ?? m.rotateX;
+      const ryExpr = m.ry ?? m.rotateY;
+      const rzExpr = m.rz ?? m.rotateZ;
+      if (rxExpr !== undefined) state.rx = lerpMix(state.rx, evalExpr(rxExpr, state.rx));
+      if (ryExpr !== undefined) state.ry = lerpMix(state.ry, evalExpr(ryExpr, state.ry));
+      if (rzExpr !== undefined) state.rz = lerpMix(state.rz, evalExpr(rzExpr, state.rz));
+
+      if (m.spinX) state.rx += effectiveT * 360 * m.spinX * blend;
+      if (m.spinY) state.ry += effectiveT * 360 * m.spinY * blend;
+      if (m.spinZ) state.rz += effectiveT * 360 * m.spinZ * blend;
+
+      if (m.scale !== undefined) {
+        const sc = evalExpr(m.scale, 1);
+        state.sx = lerpMix(state.sx, sc);
+        state.sy = lerpMix(state.sy, sc);
+        state.sz = lerpMix(state.sz, sc);
+      }
+      if (m.scaleX !== undefined) state.sx = lerpMix(state.sx, evalExpr(m.scaleX, state.sx));
+      if (m.scaleY !== undefined) state.sy = lerpMix(state.sy, evalExpr(m.scaleY, state.sy));
+      if (m.scaleZ !== undefined) state.sz = lerpMix(state.sz, evalExpr(m.scaleZ, state.sz));
+
+      if (!rec.hasPhysics && m.bob) {
+        const amp = typeof m.bob === 'number' ? m.bob : m.bob.amp;
+        const freq = typeof m.bob === 'number' ? 1 : m.bob.freq ?? 1;
+        const phase = typeof m.bob === 'number' ? 0 : m.bob.phase ?? 0;
+        state.py += Math.sin(effectiveT * Math.PI * 2 * freq + phase + rec.repeatIndex * 0.45) * amp * blend;
+      }
+      if (!rec.hasPhysics && m.waveY) {
+        const amp = typeof m.waveY === 'number' ? m.waveY : m.waveY.amp;
+        const freq = typeof m.waveY === 'number' ? 1 : m.waveY.freq ?? 1;
+        const phase = typeof m.waveY === 'number' ? 0 : m.waveY.phase ?? 0;
+        state.py += Math.sin(effectiveT * Math.PI * 2 * freq + phase + state.px * 0.8 + state.pz * 0.8) * amp * blend;
+      }
+      if (!rec.hasPhysics && m.bounceAmp) {
+        state.py += Math.abs(Math.sin(effectiveT * Math.PI * 2)) * m.bounceAmp * blend;
+      }
+      if (!rec.hasPhysics && m.sway) {
+        const amp = typeof m.sway === 'number' ? m.sway : m.sway.amp;
+        const freq = typeof m.sway === 'number' ? 1 : m.sway.freq ?? 1;
+        const phase = typeof m.sway === 'number' ? 0 : m.sway.phase ?? 0;
+        state.px += Math.cos(effectiveT * Math.PI * 2 * freq + phase + rec.repeatIndex * 0.45) * amp * blend;
+      }
+      if (!rec.hasPhysics && m.orbit) {
+        const turns = m.orbit.turns ?? 1;
+        const phase = m.orbit.phase ?? 0;
+        const ang = effectiveT * Math.PI * 2 * turns + phase + (rec.repeatIndex / Math.max(1, rec.repeatTotal)) * Math.PI * 2;
+        const cx = m.orbit.cx ?? 0;
+        const cy = m.orbit.cy ?? state.py;
+        const cz = m.orbit.cz ?? 0;
+        const radX = m.orbit.rx;
+        const radZ = m.orbit.rz ?? m.orbit.rx;
+        state.px = lerpMix(state.px, cx + Math.cos(ang) * radX);
+        state.pz = lerpMix(state.pz, cz + Math.sin(ang) * radZ);
+        if (m.orbit.ry) state.py = lerpMix(state.py, cy + Math.sin(ang) * m.orbit.ry);
+      }
+      if (!rec.hasPhysics && m.orbitY) {
+        const rad = typeof m.orbitY === 'number' ? m.orbitY : m.orbitY.radius ?? 2;
+        const turns = typeof m.orbitY === 'number' ? 1 : m.orbitY.turns ?? 1;
+        const phase = typeof m.orbitY === 'number' ? 0 : m.orbitY.phase ?? 0;
+        const ang = effectiveT * Math.PI * 2 * turns + phase;
+        state.px = lerpMix(state.px, Math.cos(ang) * rad);
+        state.pz = lerpMix(state.pz, Math.sin(ang) * rad);
+      }
+      if (!rec.hasPhysics && m.orbitX) {
+        const rad = typeof m.orbitX === 'number' ? m.orbitX : m.orbitX.radius ?? 2;
+        const turns = typeof m.orbitX === 'number' ? 1 : m.orbitX.turns ?? 1;
+        const phase = typeof m.orbitX === 'number' ? 0 : m.orbitX.phase ?? 0;
+        const ang = effectiveT * Math.PI * 2 * turns + phase;
+        state.py = lerpMix(state.py, Math.cos(ang) * rad);
+        state.pz = lerpMix(state.pz, Math.sin(ang) * rad);
+      }
+      if (!rec.hasPhysics && m.lissajous) {
+        const lj = m.lissajous;
+        const u = effectiveT * Math.PI * 2 + (lj.phase ?? 0);
+        state.px = lerpMix(state.px, (lj.ax ?? 2) * Math.sin((lj.fx ?? 3) * u));
+        state.py = lerpMix(state.py, (lj.ay ?? 1.2) * Math.sin((lj.fy ?? 2) * u));
+        state.pz = lerpMix(state.pz, (lj.az ?? 1.5) * Math.cos((lj.fz ?? 4) * u));
+      }
+      if (!rec.hasPhysics && m.spiral) {
+        const sp = m.spiral;
+        const u = effectiveT;
+        const ang = u * Math.PI * 2 * (sp.turns ?? 3);
+        const rCur = (sp.r0 ?? 0.2) + ((sp.r1 ?? 2.5) - (sp.r0 ?? 0.2)) * u;
+        state.px = lerpMix(state.px, Math.cos(ang) * rCur);
+        state.pz = lerpMix(state.pz, Math.sin(ang) * rCur);
+        state.py = lerpMix(state.py, (u - 0.5) * (sp.height ?? 2.4));
+      }
+      if (m.pulse) {
+        const lo = m.pulse.min ?? 0.85;
+        const hi = m.pulse.max ?? 1.15;
+        const freq = m.pulse.freq ?? 1;
+        const phase = m.pulse.phase ?? 0;
+        const w = 0.5 + 0.5 * Math.sin(effectiveT * Math.PI * 2 * freq + phase);
+        const pScale = 1 + ((lo + (hi - lo) * w) - 1) * blend;
+        state.sx *= pScale;
+        state.sy *= pScale;
+        state.sz *= pScale;
+      }
+    };
+
+    const applyVertexDeformers = (rec: RuntimeNodeRecord, effectiveT: number, dt: number) => {
+      if (!rec.basePosAttr || !(rec.object instanceof THREE.Mesh) || !rec.object.geometry) return;
+      const geom = rec.object.geometry;
+      const posAttr = geom.getAttribute('position');
+      if (!posAttr) return;
+
+      const modifiers: EvoModifierSpec[] = (rec.spec.modifiers || []).filter((m) => m.type !== 'mirror');
+      const morphTargets: EvoMorphTargetSpec[] = rec.spec.morphTargets || [];
+      const softBody = rec.spec.softBody;
+
+      let squashAmt = 0;
+      if (softBody && softBody.enabled !== false) {
+        const squashParam = softBody.squashOnBounce ?? softBody.squash ?? 0.25;
+        const velDeltaY = rec.simVel.y - rec.prevSimVelY;
+        if (velDeltaY > 2.2) {
+          rec.softBodySquash = Math.min(0.42, squashParam * (velDeltaY / 8));
+        }
+        rec.prevSimVelY = rec.simVel.y;
+        const rawStiff = softBody.stiffness ?? 6.5;
+        const effStiff = rawStiff < 2 ? rawStiff * 10 : rawStiff;
+        rec.softBodySquash *= Math.exp(-effStiff * dt);
+        const wobbleAmp = softBody.wobble ?? (rec.hasPhysics ? 0.06 : squashParam * 0.28);
+        const dampOsc = rec.hasPhysics ? 0 : Math.cos(effectiveT * Math.PI * 4) * ((softBody.damping ?? 0.12) * 0.35);
+        squashAmt = rec.softBodySquash + Math.sin(effectiveT * Math.PI * 6) * wobbleAmp + dampOsc;
+      }
+
+      if (modifiers.length === 0 && morphTargets.length === 0 && Math.abs(squashAmt) < 1e-4) {
+        return;
+      }
+
+      const evalNum = (val: number | string | undefined, fb: number) =>
+        evaluateEvoMathExpr(val, effectiveT, rec.repeatIndex, rec.repeatTotal, spec.durationSec, fb);
+
+      const base = rec.basePosAttr;
+      const count = posAttr.count;
+      for (let i = 0; i < count; i += 1) {
+        let x = base[i * 3];
+        let y = base[i * 3 + 1];
+        let z = base[i * 3 + 2];
+
+        for (const mod of modifiers) {
+          const strength = evalNum(mod.strength ?? mod.angle, 0.5);
+          const freq = evalNum(mod.frequency, 2.2);
+          const hasDynamicStrength = typeof (mod.strength ?? mod.angle) === 'string' && /\bt\b|\bsec\b/.test(String(mod.strength ?? mod.angle));
+          const hasSpeed = mod.speed !== undefined;
+          const spd = evalNum(mod.speed, 1.0);
+          const axis = mod.axis || 'y';
+
+          if (mod.type === 'twist') {
+            const coord = axis === 'x' ? x : axis === 'z' ? z : y;
+            const modPhase = hasSpeed && !hasDynamicStrength ? 0.4 + 0.6 * Math.sin(effectiveT * Math.PI * 2 * spd) : 1;
+            const ang = coord * strength * modPhase;
+            const c = Math.cos(ang);
+            const s = Math.sin(ang);
+            if (axis === 'x') {
+              const ny = y * c - z * s;
+              const nz = y * s + z * c;
+              y = ny; z = nz;
+            } else if (axis === 'z') {
+              const nx = x * c - y * s;
+              const ny = x * s + y * c;
+              x = nx; y = ny;
+            } else {
+              const nx = x * c - z * s;
+              const nz = x * s + z * c;
+              x = nx; z = nz;
+            }
+          } else if (mod.type === 'bend') {
+            const modPhase = hasSpeed && !hasDynamicStrength ? 0.4 + 0.6 * Math.sin(effectiveT * Math.PI * 2 * spd) : 1;
+            const ang = (axis === 'x' ? x : y) * strength * modPhase;
+            const c = Math.cos(ang);
+            const s = Math.sin(ang);
+            if (axis === 'x') {
+              const nx = x * c - z * s;
+              const nz = x * s + z * c;
+              x = nx; z = nz;
+            } else {
+              const ny = y * c - z * s;
+              const nz = y * s + z * c;
+              y = ny; z = nz;
+            }
+          } else if (mod.type === 'taper') {
+            const coord = axis === 'x' ? x : axis === 'z' ? z : y;
+            const factor = Math.max(0.15, 1 + coord * strength);
+            if (axis === 'x') { y *= factor; z *= factor; }
+            else if (axis === 'z') { x *= factor; y *= factor; }
+            else { x *= factor; z *= factor; }
+          } else if (mod.type === 'wave') {
+            const disp = Math.sin(x * freq + z * freq + effectiveT * Math.PI * 2 * spd) * strength;
+            if (axis === 'x') x += disp;
+            else if (axis === 'z') z += disp;
+            else y += disp;
+          } else if (mod.type === 'noise') {
+            const disp =
+              (Math.sin(x * freq * 2.1 + effectiveT * Math.PI * 2 * spd) *
+                Math.cos(y * freq * 1.9 + z * freq * 2.3)) *
+              strength;
+            x += disp * 0.4;
+            y += disp;
+            z += disp * 0.4;
+          } else if (mod.type === 'squash') {
+            const sq = strength * Math.sin(effectiveT * Math.PI * 2 * spd);
+            const yFac = Math.max(0.35, 1 - sq);
+            const xzFac = 1 / Math.sqrt(yFac);
+            x *= xzFac;
+            y *= yFac;
+            z *= xzFac;
+          }
+        }
+
+        for (const mt of morphTargets) {
+          const w = Math.max(0, Math.min(1.5, evalNum(mt.weight, 0)));
+          if (w <= 1e-4) continue;
+          if (mt.scale) {
+            x *= 1 + (mt.scale[0] - 1) * w;
+            y *= 1 + (mt.scale[1] - 1) * w;
+            z *= 1 + (mt.scale[2] - 1) * w;
+          }
+          if (mt.twist) {
+            const ang = y * mt.twist * w;
+            const c = Math.cos(ang);
+            const s = Math.sin(ang);
+            const nx = x * c - z * s;
+            const nz = x * s + z * c;
+            x = nx; z = nz;
+          }
+          if (mt.bend) {
+            const ang = y * mt.bend * w;
+            const c = Math.cos(ang);
+            const s = Math.sin(ang);
+            const ny = y * c - z * s;
+            const nz = y * s + z * c;
+            y = ny; z = nz;
+          }
+          if (mt.bulge) {
+            const rad = Math.hypot(x, y, z) || 1;
+            const b = 1 + (mt.bulge * w) / (1 + rad);
+            x *= b; y *= b; z *= b;
+          }
+        }
+
+        if (Math.abs(squashAmt) > 1e-4) {
+          const yFac = Math.max(0.45, 1 - squashAmt);
+          const xzFac = 1 / Math.sqrt(yFac);
+          x *= xzFac;
+          y *= yFac;
+          z *= xzFac;
+        }
+
+        posAttr.setXYZ(i, x, y, z);
+      }
+      posAttr.needsUpdate = true;
+      geom.computeVertexNormals();
+    };
 
     const desiredCamPos = new THREE.Vector3(0, 2.4, 6.2);
     const desiredCamTarget = new THREE.Vector3(0, 0.2, 0);
@@ -974,149 +1423,156 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
         : tNorm;
       const stepDt = Math.min(0.05, Math.max(0.001, dt || 0.016));
 
-      // 1. Evaluate node keyframes & Liquid-Motion math expressions
+      // 1. Evaluate node keyframes, Liquid-Motion expressions, action strips & path follow
       for (const rec of runtimeNodes) {
         const s = rec.spec;
-        let px = rec.hasPhysics ? rec.simPos.x : rec.basePos.x;
-        let py = rec.hasPhysics ? rec.simPos.y : rec.basePos.y;
-        let pz = rec.hasPhysics ? rec.simPos.z : rec.basePos.z;
-        let rx = rec.baseRotDeg.x;
-        let ry = rec.baseRotDeg.y;
-        let rz = rec.baseRotDeg.z;
-        let sx = rec.baseScale.x;
-        let sy = rec.baseScale.y;
-        let sz = rec.baseScale.z;
+        if (rec.triggerFlashTimer > 0) rec.triggerFlashTimer = Math.max(0, rec.triggerFlashTimer - stepDt);
+        const state = {
+          px: rec.hasPhysics ? rec.simPos.x : rec.basePos.x,
+          py: rec.hasPhysics ? rec.simPos.y : rec.basePos.y,
+          pz: rec.hasPhysics ? rec.simPos.z : rec.basePos.z,
+          rx: rec.baseRotDeg.x,
+          ry: rec.baseRotDeg.y,
+          rz: rec.baseRotDeg.z,
+          sx: rec.baseScale.x,
+          sy: rec.baseScale.y,
+          sz: rec.baseScale.z,
+        };
 
         if (!rec.hasPhysics && s.keyframes && s.keyframes.length > 0) {
           const kf = sampleKeyframes(s.keyframes, effectiveT);
-          if (kf.x !== undefined) px = kf.x;
-          if (kf.y !== undefined) py = kf.y;
-          if (kf.z !== undefined) pz = kf.z;
-          if (kf.rx !== undefined) rx = kf.rx;
-          if (kf.ry !== undefined) ry = kf.ry;
-          if (kf.rz !== undefined) rz = kf.rz;
+          if (kf.x !== undefined) state.px = kf.x;
+          if (kf.y !== undefined) state.py = kf.y;
+          if (kf.z !== undefined) state.pz = kf.z;
+          if (kf.rx !== undefined) state.rx = kf.rx;
+          if (kf.ry !== undefined) state.ry = kf.ry;
+          if (kf.rz !== undefined) state.rz = kf.rz;
           if (kf.scale !== undefined) {
-            sx = kf.scale;
-            sy = kf.scale;
-            sz = kf.scale;
+            state.sx = kf.scale;
+            state.sy = kf.scale;
+            state.sz = kf.scale;
           }
         }
 
-        const m = s.motion;
-        if (m) {
-          const evalExpr = (v: number | string | undefined, fb: number) =>
-            evaluateEvoMathExpr(v, effectiveT, rec.repeatIndex, rec.repeatTotal, spec.durationSec, fb);
+        if (s.motion) {
+          applyMotionSpec(s.motion, state, rec, effectiveT, 1);
+        }
 
-          if (!rec.hasPhysics) {
-            if (m.x !== undefined) px = evalExpr(m.x, px);
-            if (m.y !== undefined) py = evalExpr(m.y, py);
-            if (m.z !== undefined) pz = evalExpr(m.z, pz);
-          }
-
-          const rxExpr = m.rx ?? m.rotateX;
-          const ryExpr = m.ry ?? m.rotateY;
-          const rzExpr = m.rz ?? m.rotateZ;
-          if (rxExpr !== undefined) rx = evalExpr(rxExpr, rx);
-          if (ryExpr !== undefined) ry = evalExpr(ryExpr, ry);
-          if (rzExpr !== undefined) rz = evalExpr(rzExpr, rz);
-
-          if (m.spinX) rx += effectiveT * 360 * m.spinX;
-          if (m.spinY) ry += effectiveT * 360 * m.spinY;
-          if (m.spinZ) rz += effectiveT * 360 * m.spinZ;
-
-          if (m.scale !== undefined) {
-            const sc = evalExpr(m.scale, 1);
-            sx = sc;
-            sy = sc;
-            sz = sc;
-          }
-          if (m.scaleX !== undefined) sx = evalExpr(m.scaleX, sx);
-          if (m.scaleY !== undefined) sy = evalExpr(m.scaleY, sy);
-          if (m.scaleZ !== undefined) sz = evalExpr(m.scaleZ, sz);
-
-          if (!rec.hasPhysics && m.bob) {
-            const amp = typeof m.bob === 'number' ? m.bob : m.bob.amp;
-            const freq = typeof m.bob === 'number' ? 1 : m.bob.freq ?? 1;
-            const phase = typeof m.bob === 'number' ? 0 : m.bob.phase ?? 0;
-            py += Math.sin(effectiveT * Math.PI * 2 * freq + phase + rec.repeatIndex * 0.45) * amp;
-          }
-          if (!rec.hasPhysics && m.waveY) {
-            const amp = typeof m.waveY === 'number' ? m.waveY : m.waveY.amp;
-            const freq = typeof m.waveY === 'number' ? 1 : m.waveY.freq ?? 1;
-            const phase = typeof m.waveY === 'number' ? 0 : m.waveY.phase ?? 0;
-            py += Math.sin(effectiveT * Math.PI * 2 * freq + phase + px * 0.8 + pz * 0.8) * amp;
-          }
-          if (!rec.hasPhysics && m.bounceAmp) {
-            py += Math.abs(Math.sin(effectiveT * Math.PI * 2)) * m.bounceAmp;
-          }
-          if (!rec.hasPhysics && m.sway) {
-            const amp = typeof m.sway === 'number' ? m.sway : m.sway.amp;
-            const freq = typeof m.sway === 'number' ? 1 : m.sway.freq ?? 1;
-            const phase = typeof m.sway === 'number' ? 0 : m.sway.phase ?? 0;
-            px += Math.cos(effectiveT * Math.PI * 2 * freq + phase + rec.repeatIndex * 0.45) * amp;
-          }
-          if (!rec.hasPhysics && m.orbit) {
-            const turns = m.orbit.turns ?? 1;
-            const phase = m.orbit.phase ?? 0;
-            const ang = effectiveT * Math.PI * 2 * turns + phase + (rec.repeatIndex / Math.max(1, rec.repeatTotal)) * Math.PI * 2;
-            const cx = m.orbit.cx ?? 0;
-            const cy = m.orbit.cy ?? py;
-            const cz = m.orbit.cz ?? 0;
-            const radX = m.orbit.rx;
-            const radZ = m.orbit.rz ?? m.orbit.rx;
-            px = cx + Math.cos(ang) * radX;
-            pz = cz + Math.sin(ang) * radZ;
-            if (m.orbit.ry) py = cy + Math.sin(ang) * m.orbit.ry;
-          }
-          if (!rec.hasPhysics && m.orbitY) {
-            const rad = typeof m.orbitY === 'number' ? m.orbitY : m.orbitY.radius ?? 2;
-            const turns = typeof m.orbitY === 'number' ? 1 : m.orbitY.turns ?? 1;
-            const phase = typeof m.orbitY === 'number' ? 0 : m.orbitY.phase ?? 0;
-            const ang = effectiveT * Math.PI * 2 * turns + phase;
-            px = Math.cos(ang) * rad;
-            pz = Math.sin(ang) * rad;
-          }
-          if (!rec.hasPhysics && m.orbitX) {
-            const rad = typeof m.orbitX === 'number' ? m.orbitX : m.orbitX.radius ?? 2;
-            const turns = typeof m.orbitX === 'number' ? 1 : m.orbitX.turns ?? 1;
-            const phase = typeof m.orbitX === 'number' ? 0 : m.orbitX.phase ?? 0;
-            const ang = effectiveT * Math.PI * 2 * turns + phase;
-            py = Math.cos(ang) * rad;
-            pz = Math.sin(ang) * rad;
-          }
-          if (!rec.hasPhysics && m.lissajous) {
-            const lj = m.lissajous;
-            const u = effectiveT * Math.PI * 2 + (lj.phase ?? 0);
-            px = (lj.ax ?? 2) * Math.sin((lj.fx ?? 3) * u);
-            py = (lj.ay ?? 1.2) * Math.sin((lj.fy ?? 2) * u);
-            pz = (lj.az ?? 1.5) * Math.cos((lj.fz ?? 4) * u);
-          }
-          if (!rec.hasPhysics && m.spiral) {
-            const sp = m.spiral;
-            const u = effectiveT;
-            const ang = u * Math.PI * 2 * (sp.turns ?? 3);
-            const rCur = (sp.r0 ?? 0.2) + ((sp.r1 ?? 2.5) - (sp.r0 ?? 0.2)) * u;
-            px = Math.cos(ang) * rCur;
-            pz = Math.sin(ang) * rCur;
-            py = (u - 0.5) * (sp.height ?? 2.4);
-          }
-          if (m.pulse) {
-            const lo = m.pulse.min ?? 0.85;
-            const hi = m.pulse.max ?? 1.15;
-            const freq = m.pulse.freq ?? 1;
-            const phase = m.pulse.phase ?? 0;
-            const w = 0.5 + 0.5 * Math.sin(effectiveT * Math.PI * 2 * freq + phase);
-            const pScale = lo + (hi - lo) * w;
-            sx *= pScale;
-            sy *= pScale;
-            sz *= pScale;
+        // NLA Action Strip mixing over normalized time windows
+        if (Array.isArray(s.actionStrips) && s.actionStrips.length > 0) {
+          for (const strip of s.actionStrips) {
+            if (effectiveT >= strip.start && effectiveT <= strip.end && strip.motion) {
+              const span = Math.max(1e-4, strip.end - strip.start);
+              const localU = (effectiveT - strip.start) / span;
+              const edgeFade = Math.min(1, Math.min(localU / 0.12, (1 - localU) / 0.12));
+              const blend = Math.max(0, Math.min(1, (strip.blend ?? 1) * edgeFade));
+              applyMotionSpec(strip.motion, state, rec, localU, blend);
+            }
           }
         }
 
-        if (s.material?.emissivePulse && rec.object instanceof THREE.Mesh && rec.object.material instanceof THREE.MeshPhysicalMaterial) {
-          const ep = s.material.emissivePulse;
-          const w = 0.5 + 0.5 * Math.sin(effectiveT * Math.PI * 2 * (ep.freq ?? 2));
-          rec.object.material.emissiveIntensity = (ep.min ?? 0.2) + ((ep.max ?? 1.6) - (ep.min ?? 0.2)) * w;
+        // Spline / Bezier Path Follow
+        let orientedByPath = false;
+        if (rec.pathCurve && s.pathFollow && !rec.hasPhysics) {
+          const pf = s.pathFollow;
+          const speed = pf.speed ?? 1;
+          const rawU = (effectiveT * speed) % 1;
+          const u = applyEvoEasing(pf.ease, rawU < 0 ? rawU + 1 : rawU);
+          const pt = rec.pathCurve.getPointAt(Math.max(0, Math.min(1, u)));
+          state.px = pt.x;
+          state.py = pt.y;
+          state.pz = pt.z;
+          if (pf.orientToPath) {
+            const tan = rec.pathCurve.getTangentAt(Math.max(0, Math.min(1, u))).normalize();
+            rec.object.position.set(state.px, state.py, state.pz);
+            rec.object.lookAt(state.px + tan.x, state.py + tan.y, state.pz + tan.z);
+            orientedByPath = true;
+          }
+        }
+
+        const ep = s.material?.emissivePulse;
+        if (ep && rec.object instanceof THREE.Mesh && rec.object.material instanceof THREE.MeshPhysicalMaterial) {
+          const freq = typeof ep === 'object' ? (ep.freq ?? 2) : typeof ep === 'number' ? Math.max(0.6, ep * 2.2) : 2;
+          const minI = typeof ep === 'object' ? (ep.min ?? 0.2) : 0.25;
+          const maxI = typeof ep === 'object' ? (ep.max ?? 1.6) : typeof ep === 'number' ? 0.55 + ep * 1.45 : 1.5;
+          const w = 0.5 + 0.5 * Math.sin(effectiveT * Math.PI * 2 * freq);
+          rec.object.material.emissiveIntensity = minI + (maxI - minI) * w;
+        }
+
+        // 1a-extra: Force Fields (node-attached + top-level spec.forceFields)
+        const allForceFields: Array<{ type: 'attractor' | 'repulsor' | 'vortex'; strength: number; radius: number; pos: THREE.Vector3; owner: RuntimeNodeRecord | null }> = [];
+        for (const fieldRec of runtimeNodes) {
+          const ff = fieldRec.spec.forceField;
+          if (ff) {
+            allForceFields.push({
+              type: ff.type,
+              strength: ff.strength ?? 6.5,
+              radius: ff.radius ?? 5.5,
+              pos: fieldRec.object.position,
+              owner: fieldRec,
+            });
+          }
+        }
+        if (Array.isArray(spec.forceFields)) {
+          for (const ff of spec.forceFields) {
+            const fp = ff.position || [0, 0, 0];
+            allForceFields.push({
+              type: ff.type,
+              strength: ff.strength ?? 6.5,
+              radius: ff.radius ?? 8.0,
+              pos: new THREE.Vector3(fp[0] ?? 0, fp[1] ?? 0, fp[2] ?? 0),
+              owner: null,
+            });
+          }
+        }
+
+        if (rec.baseParticleAttr && rec.object instanceof THREE.Points && rec.object.geometry && allForceFields.length > 0) {
+          const pAttr = rec.object.geometry.getAttribute('position');
+          if (pAttr) {
+            const ff0 = allForceFields[0];
+            const pull = Math.min(0.45, Math.max(0.05, ff0.strength * 0.08));
+            const spinAng = effectiveT * Math.PI * 2 * 0.35;
+            const cosA = Math.cos(spinAng);
+            const sinA = Math.sin(spinAng);
+            for (let pi = 0; pi < pAttr.count; pi += 1) {
+              const bx = rec.baseParticleAttr[pi * 3];
+              const by = rec.baseParticleAttr[pi * 3 + 1];
+              const bz = rec.baseParticleAttr[pi * 3 + 2];
+              const rx = bx * cosA - bz * sinA;
+              const rz = bx * sinA + bz * cosA;
+              const pulseIn = 1 - pull * (0.4 + 0.6 * Math.sin(effectiveT * Math.PI * 4 + pi * 0.25));
+              pAttr.setXYZ(pi, rx * pulseIn, by * (0.9 + 0.1 * Math.cos(effectiveT * Math.PI * 2 + pi)), rz * pulseIn);
+            }
+            pAttr.needsUpdate = true;
+          }
+        }
+
+        if (rec.hasPhysics && playingRef.current && !rec.isStatic) {
+          for (const ff of allForceFields) {
+            if (ff.owner === rec) continue;
+            const fx = ff.pos.x - rec.simPos.x;
+            const fy = ff.pos.y - rec.simPos.y;
+            const fz = ff.pos.z - rec.simPos.z;
+            const dist = Math.hypot(fx, fy, fz);
+            if (dist < 1e-4 || dist > ff.radius) continue;
+            const falloff = (1 - dist / ff.radius) * ff.strength * stepDt;
+            const nx = fx / dist;
+            const ny = fy / dist;
+            const nz = fz / dist;
+            if (ff.type === 'attractor') {
+              rec.simVel.x += nx * falloff;
+              rec.simVel.y += ny * falloff;
+              rec.simVel.z += nz * falloff;
+            } else if (ff.type === 'repulsor') {
+              rec.simVel.x -= nx * falloff;
+              rec.simVel.y -= ny * falloff;
+              rec.simVel.z -= nz * falloff;
+            } else if (ff.type === 'vortex') {
+              rec.simVel.x += (-nz * 1.15 + nx * 0.28) * falloff;
+              rec.simVel.z += (nx * 1.15 + nz * 0.28) * falloff;
+              rec.simVel.y += ny * 0.25 * falloff;
+            }
+          }
         }
 
         // 1b. Rigid-Body Euler Kinematics & Boundary Restitution
@@ -1181,18 +1637,34 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
             rec.hitFlashTimer = 0.14;
           }
 
-          px = rec.simPos.x;
-          py = rec.simPos.y;
-          pz = rec.simPos.z;
+          state.px = rec.simPos.x;
+          state.py = rec.simPos.y;
+          state.pz = rec.simPos.z;
         }
 
-        rec.object.position.set(px, py, pz);
-        rec.object.rotation.set(
-          THREE.MathUtils.degToRad(rx),
-          THREE.MathUtils.degToRad(ry),
-          THREE.MathUtils.degToRad(rz)
-        );
-        rec.object.scale.set(sx, sy, sz);
+        if (rec.triggerFlashTimer > 0) {
+          const boost = 1 + 0.18 * (rec.triggerFlashTimer / 0.25);
+          state.sx *= boost;
+          state.sy *= boost;
+          state.sz *= boost;
+        }
+
+        rec.object.position.set(state.px, state.py, state.pz);
+        if (!orientedByPath) {
+          rec.object.rotation.set(
+            THREE.MathUtils.degToRad(state.rx),
+            THREE.MathUtils.degToRad(state.ry),
+            THREE.MathUtils.degToRad(state.rz)
+          );
+        }
+        rec.object.scale.set(state.sx, state.sy, state.sz);
+
+        if (rec.triggerHelper) {
+          rec.triggerHelper.position.copy(rec.object.position);
+        }
+
+        // Apply Blender-style vertex modifiers, morph targets & soft-body deformation
+        applyVertexDeformers(rec, effectiveT, stepDt);
       }
 
       // 1c. Pairwise Hitbox Collision Detection & Elastic Impulse
@@ -1284,16 +1756,207 @@ export const InlineEvoViewer: React.FC<InlineEvoViewerProps> = ({
         }
       }
 
-      // 2. Follow constraints (lagged tracking of targetId)
+      // 1d. Trigger Zones & Top-Level Triggers (pulse / bounce / glow / reverse)
+      const fireTriggerAction = (
+        action: 'pulse' | 'bounce' | 'glow' | 'reverse',
+        other: RuntimeNodeRecord,
+        zoneOwner?: RuntimeNodeRecord
+      ) => {
+        if (action === 'pulse') {
+          other.triggerFlashTimer = 0.25;
+          if (zoneOwner) zoneOwner.triggerFlashTimer = 0.25;
+        } else if (action === 'glow' && other.object instanceof THREE.Mesh && other.object.material instanceof THREE.MeshPhysicalMaterial) {
+          other.object.material.emissiveIntensity = 1.65;
+        } else if (action === 'bounce' && other.hasPhysics && !other.isStatic && other.triggerFlashTimer <= 0) {
+          other.simVel.y = Math.max(other.simVel.y, 5.2);
+          other.triggerFlashTimer = 0.3;
+        } else if (action === 'reverse' && other.hasPhysics && !other.isStatic && other.triggerFlashTimer <= 0) {
+          other.simVel.multiplyScalar(-1);
+          other.triggerFlashTimer = 0.35;
+        }
+      };
+
+      for (const zoneRec of runtimeNodes) {
+        const tz = zoneRec.spec.triggerZone;
+        if (!tz) continue;
+        const rad = tz.radius ?? 1.4;
+        const action = tz.action || 'pulse';
+        for (const other of runtimeNodes) {
+          if (other === zoneRec || other.spec.type === 'group') continue;
+          const dist = other.object.position.distanceTo(zoneRec.object.position);
+          if (dist <= rad) {
+            fireTriggerAction(action, other, zoneRec);
+          }
+        }
+      }
+
+      if (Array.isArray(spec.triggers)) {
+        for (const trig of spec.triggers) {
+          const tp = trig.position || [0, 0, 0];
+          const tCenter = new THREE.Vector3(tp[0] ?? 0, tp[1] ?? 0, tp[2] ?? 0);
+          const rad = trig.radius ?? 3.5;
+          const action = trig.action || 'pulse';
+          const targets = trig.targetId
+            ? [nodeById.get(trig.targetId)].filter((n): n is RuntimeNodeRecord => Boolean(n))
+            : runtimeNodes.filter((n) => n.spec.type !== 'group');
+          let triggered = false;
+          for (const other of targets) {
+            if (other.object.position.distanceTo(tCenter) <= rad) {
+              fireTriggerAction(action, other);
+              triggered = true;
+            }
+          }
+          if (triggered && action === 'pulse') {
+            for (const nearNode of runtimeNodes) {
+              if (nearNode.spec.type !== 'group' && nearNode.object.position.distanceTo(tCenter) <= 0.6) {
+                nearNode.triggerFlashTimer = 0.25;
+              }
+            }
+          }
+        }
+      }
+
+      // 2. FABRIK Inverse Kinematics Chains
+      if (Array.isArray(spec.ikChains) && spec.ikChains.length > 0) {
+        const upAxis = new THREE.Vector3(0, 1, 0);
+        for (const chain of spec.ikChains) {
+          if (!Array.isArray(chain.nodes) || chain.nodes.length < 2) continue;
+          const joints = chain.nodes.map((id) => nodeById.get(id)).filter(Boolean) as RuntimeNodeRecord[];
+          if (joints.length < 2) continue;
+
+          const lengths = ikInitialLengths.get(chain) || joints.slice(0, -1).map(() => 1.0);
+          let targetVec = joints[joints.length - 1].object.position.clone();
+          const tRefId = chain.targetId || (typeof chain.target === 'string' ? chain.target : '');
+          if (tRefId) {
+            const tNode = nodeById.get(tRefId);
+            if (tNode) targetVec = tNode.object.position.clone();
+          } else if (Array.isArray(chain.target)) {
+            targetVec.set(chain.target[0] || 0, chain.target[1] || 0, chain.target[2] || 0);
+          } else if (Array.isArray(chain.targetPos)) {
+            targetVec.set(chain.targetPos[0] || 0, chain.targetPos[1] || 0, chain.targetPos[2] || 0);
+          } else if (chain.targetPos && typeof chain.targetPos === 'object') {
+            targetVec.set(
+              evaluateEvoMathExpr(chain.targetPos.x, effectiveT, 0, 1, spec.durationSec, targetVec.x),
+              evaluateEvoMathExpr(chain.targetPos.y, effectiveT, 0, 1, spec.durationSec, targetVec.y),
+              evaluateEvoMathExpr(chain.targetPos.z, effectiveT, 0, 1, spec.durationSec, targetVec.z)
+            );
+          }
+
+          const rootPos = joints[0].object.position.clone();
+          const pts = joints.map((j) => j.object.position.clone());
+          const totalLen = lengths.reduce((a, b) => a + b, 0);
+          const distRootToTarget = rootPos.distanceTo(targetVec);
+          const iterations = Math.max(1, Math.min(24, chain.iterations ?? 8));
+
+          if (distRootToTarget >= totalLen - 1e-4) {
+            const dir = targetVec.clone().sub(rootPos).normalize();
+            pts[0].copy(rootPos);
+            for (let k = 0; k < lengths.length; k += 1) {
+              pts[k + 1] = pts[k].clone().addScaledVector(dir, lengths[k]);
+            }
+          } else {
+            // Optional pole bias for intermediate joint(s)
+            if (Array.isArray(chain.pole) && pts.length >= 3) {
+              const poleVec = new THREE.Vector3(chain.pole[0], chain.pole[1], chain.pole[2]);
+              pts[1].lerp(poleVec, 0.25);
+            }
+            for (let iter = 0; iter < iterations; iter += 1) {
+              // Forward reaching
+              pts[pts.length - 1].copy(targetVec);
+              for (let k = pts.length - 2; k >= 0; k -= 1) {
+                const diff = pts[k].clone().sub(pts[k + 1]);
+                const len = diff.length() || 1e-5;
+                pts[k].copy(pts[k + 1]).addScaledVector(diff, lengths[k] / len);
+              }
+              // Backward reaching
+              pts[0].copy(rootPos);
+              for (let k = 0; k < pts.length - 1; k += 1) {
+                const diff = pts[k + 1].clone().sub(pts[k]);
+                const len = diff.length() || 1e-5;
+                pts[k + 1].copy(pts[k]).addScaledVector(diff, lengths[k] / len);
+              }
+            }
+          }
+
+          const damp = typeof chain.damping === 'number' ? Math.max(0.05, Math.min(1, chain.damping)) : 1;
+          for (let k = 0; k < joints.length; k += 1) {
+            if (damp < 1) {
+              joints[k].object.position.lerp(pts[k], damp);
+            } else {
+              joints[k].object.position.copy(pts[k]);
+            }
+          }
+          if (chain.aimNodes !== false && chain.aimBones !== false) {
+            for (let k = 0; k < joints.length - 1; k += 1) {
+              const dir = pts[k + 1].clone().sub(pts[k]);
+              if (dir.lengthSq() > 1e-6) {
+                dir.normalize();
+                const q = new THREE.Quaternion().setFromUnitVectors(upAxis, dir);
+                joints[k].object.quaternion.copy(q);
+              }
+            }
+          }
+        }
+      }
+
+      // 2a. Follow constraints (lagged tracking of targetId) & Blender Object Constraints
       for (const rec of runtimeNodes) {
-        if (!rec.spec.follow?.targetId) continue;
-        const target = nodeById.get(rec.spec.follow.targetId);
-        if (!target) continue;
-        const stiffness = Math.max(0.05, Math.min(1, 1 - (rec.spec.follow.lag ?? 0.35)));
-        const tx = target.object.position.x + (rec.spec.follow.offsetX ?? 0);
-        const ty = target.object.position.y + (rec.spec.follow.offsetY ?? 0);
-        const tz = target.object.position.z + (rec.spec.follow.offsetZ ?? 0);
-        rec.object.position.lerp(new THREE.Vector3(tx, ty, tz), stiffness);
+        if (rec.spec.follow?.targetId) {
+          const target = nodeById.get(rec.spec.follow.targetId);
+          if (target) {
+            const stiffness = Math.max(0.05, Math.min(1, 1 - (rec.spec.follow.lag ?? 0.35)));
+            const tx = target.object.position.x + (rec.spec.follow.offsetX ?? 0);
+            const ty = target.object.position.y + (rec.spec.follow.offsetY ?? 0);
+            const tz = target.object.position.z + (rec.spec.follow.offsetZ ?? 0);
+            rec.object.position.lerp(new THREE.Vector3(tx, ty, tz), stiffness);
+          }
+        }
+
+        if (Array.isArray(rec.spec.constraints) && rec.spec.constraints.length > 0) {
+          for (const con of rec.spec.constraints as EvoConstraintSpec[]) {
+            const conTargetId = con.targetId || con.target || '';
+            const target = conTargetId ? nodeById.get(conTargetId) : undefined;
+            if (!target) continue;
+            const inf = Math.max(0, Math.min(1, con.influence ?? 1));
+            if (inf <= 0) continue;
+
+            if (con.type === 'trackTo') {
+              const prevQ = rec.object.quaternion.clone();
+              rec.object.lookAt(target.object.position);
+              if (inf < 1) {
+                const targetQ = rec.object.quaternion.clone();
+                rec.object.quaternion.copy(prevQ).slerp(targetQ, inf);
+              }
+              if (rec.spec.motion?.spinZ) {
+                rec.object.rotateZ(THREE.MathUtils.degToRad(effectiveT * 360 * rec.spec.motion.spinZ));
+              }
+            } else if (con.type === 'copyRotation') {
+              rec.object.quaternion.slerp(target.object.quaternion, inf);
+            } else if (con.type === 'copyLocation') {
+              const off = con.offset || [0, 0, 0];
+              const dest = new THREE.Vector3(
+                target.object.position.x + off[0],
+                target.object.position.y + off[1],
+                target.object.position.z + off[2]
+              );
+              rec.object.position.lerp(dest, inf);
+            } else if (con.type === 'limitDistance') {
+              const diff = rec.object.position.clone().sub(target.object.position);
+              const d = diff.length();
+              if (d > 1e-5) {
+                const minD = con.minDist ?? 0;
+                const maxD = con.maxDist ?? con.maxDistance ?? 5.2;
+                let clampedD = d;
+                if (d < minD) clampedD = minD;
+                else if (d > maxD) clampedD = maxD;
+                if (clampedD !== d) {
+                  const dest = target.object.position.clone().addScaledVector(diff.divideScalar(d), clampedD);
+                  rec.object.position.lerp(dest, inf);
+                }
+              }
+            }
+          }
+        }
       }
 
       // 2b. Sync wireframe hitbox helpers

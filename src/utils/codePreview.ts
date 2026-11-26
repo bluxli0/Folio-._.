@@ -5,6 +5,7 @@ import {
   REACT_DESIGN_MODULE_CODE,
   injectDesignSystemIntoSrcDoc,
 } from './designSystem';
+import { CHRONO_SINGULARITY_EVO_SPEC } from '../data/engineDatasets';
 
 export type PreviewCategory =
   | 'html'
@@ -431,6 +432,12 @@ button {
   },
   "audio": { "mode": "preset", "preset": "ambient", "durationSec": 4 }
 }`,
+  },
+  {
+    id: 'chrono-singularity-evo',
+    label: 'Chrono-Singularity Manifold (Hardest EVO)',
+    language: 'evo',
+    code: JSON.stringify(CHRONO_SINGULARITY_EVO_SPEC, null, 2),
   },
 ];
 

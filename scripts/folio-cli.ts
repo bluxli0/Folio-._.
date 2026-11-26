@@ -4,10 +4,13 @@ import os from 'os';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import {
+  ENGINE_DATASETS,
+  EngineDatasetId,
   FOLIO_CHANGELOGS,
   FOLIO_CURRENT_VERSION,
   FOLIO_DOCS_SECTIONS,
   FOLIO_SDK_VERSION,
+  searchEngineDatasets,
   searchFolioDocs,
   validateCreativeBlock,
 } from '../src/sdk/folioSdk';
@@ -24,17 +27,22 @@ Usage:
 Commands:
   status | doctor                 Inspect RAM, disk, binaries, Neo 4 KB, and backups
   docs [query]                    Show or search Folio documentation
+  datasets [engine] [query]       List engine training datasets, parameters & examples
   changelog [version]             Print complete Folio changelog
   sdk [ts|python]                 Print TypeScript & Python SDK reference
   chat "<prompt>" [--model id]    Send prompt to local server (fallback: Neo 4)
   neo4 "<prompt>"                 Run local Python Neo 4 engine offline
-  kb ingest-docs                  Index Folio Docs, SDK, CLI & Changelog into folio_docs.db
+  kb ingest-docs                  Index Folio Docs, SDK, CLI, Datasets & Changelog
+  kb train-datasets               Train Neo 4 knowledge.db & Markov chains on Engine Datasets
   kb ingest <path> [--shard-rows] Stream large datasets into disk-sharded SQLite FTS5
   kb search "<query>"             Search disk-backed Folio Docs + Knowledge Shards
   kb stats                        Show disk-backed DB & shard stats
   validate <file>                 Validate evo/pixelart/stopmotion/threejs/liquidmotion spec
   backup create [label]           Create clean .tar.gz backup snapshot
   backup list                     List snapshots in .folio-data/backups
+  backup restore <filename>       Restore a snapshot archive and re-index docs
+  deploy [options]                Deploy Folio to Google Cloud Run (8–32 GiB RAM)
+  setup-llm                       Stream-install llama.cpp b12780 + Qwen2.5-0.5B safely
 `);
 }
 
@@ -206,6 +214,27 @@ async function cmdChat(args: string[]): Promise<void> {
   }
 }
 
+function cmdDatasets(args: string[]): void {
+  const validEngines: EngineDatasetId[] = ['evo3d', 'threejs', 'stopmotion', 'pixelart', 'hybrid', 'ik-math'];
+  let engineFilter: EngineDatasetId | undefined;
+  let queryParts: string[] = [];
+  for (const arg of args) {
+    const low = arg.toLowerCase() as EngineDatasetId;
+    if (!engineFilter && validEngines.includes(low)) {
+      engineFilter = low;
+    } else {
+      queryParts.push(arg);
+    }
+  }
+  const q = queryParts.join(' ').trim();
+  const list = q
+    ? searchEngineDatasets(q, engineFilter)
+    : engineFilter
+    ? ENGINE_DATASETS.filter((d) => d.id === engineFilter)
+    : ENGINE_DATASETS;
+  console.log(JSON.stringify({ ok: true, count: list.length, datasets: list }, null, 2));
+}
+
 function cmdKb(args: string[]): void {
   const sub = args[0];
   const trainer = path.join(ROOT_DIR, 'python', 'neo4_trainer.py');
@@ -213,6 +242,7 @@ function cmdKb(args: string[]): void {
     const payload = JSON.stringify({
       sections: FOLIO_DOCS_SECTIONS,
       changelogs: FOLIO_CHANGELOGS,
+      datasets: ENGINE_DATASETS,
       version: FOLIO_CURRENT_VERSION,
     });
     const out = execFileSync('python3', [trainer, '--ingest-folio-docs'], {
@@ -221,6 +251,25 @@ function cmdKb(args: string[]): void {
       encoding: 'utf8',
     });
     console.log(out.trim());
+  } else if (sub === 'train-datasets') {
+    const trainPayload = JSON.stringify({ datasets: ENGINE_DATASETS, version: FOLIO_CURRENT_VERSION });
+    const trainOut = execFileSync('python3', [trainer, '--ingest-engine-datasets'], {
+      cwd: ROOT_DIR,
+      input: trainPayload,
+      encoding: 'utf8',
+    });
+    const docsPayload = JSON.stringify({
+      sections: FOLIO_DOCS_SECTIONS,
+      changelogs: FOLIO_CHANGELOGS,
+      datasets: ENGINE_DATASETS,
+      version: FOLIO_CURRENT_VERSION,
+    });
+    const docsOut = execFileSync('python3', [trainer, '--ingest-folio-docs'], {
+      cwd: ROOT_DIR,
+      input: docsPayload,
+      encoding: 'utf8',
+    });
+    console.log(JSON.stringify({ ok: true, trained: JSON.parse(trainOut), docs: JSON.parse(docsOut) }, null, 2));
   } else if (sub === 'stats') {
     const out = execFileSync('python3', [trainer, '--stats'], { cwd: ROOT_DIR, encoding: 'utf8' });
     console.log(out.trim());
@@ -246,7 +295,7 @@ function cmdKb(args: string[]): void {
     const out = execFileSync('python3', ['-c', pyCode, query], { cwd: ROOT_DIR, encoding: 'utf8' });
     console.log(out.trim());
   } else {
-    console.error('Unknown kb subcommand. Use: ingest-docs | ingest | search | stats');
+    console.error('Unknown kb subcommand. Use: ingest-docs | train-datasets | ingest | search | stats');
     process.exit(1);
   }
 }
@@ -310,8 +359,91 @@ function cmdBackup(args: string[]): void {
     console.log(JSON.stringify({ ok: true, file: dest, sizeMb: Number((st.size / 1024 / 1024).toFixed(2)) }, null, 2));
     return;
   }
-  console.error('Usage: folio backup [list|create [label]]');
+  if (sub === 'restore') {
+    const filename = path.basename((args[1] || '').trim());
+    if (!filename || !filename.endsWith('.tar.gz')) {
+      console.error('Usage: folio backup restore <snapshot.tar.gz>');
+      process.exit(1);
+    }
+    const target = path.join(backupsDir, filename);
+    if (!fs.existsSync(target)) {
+      console.error(`Snapshot not found: ${target}`);
+      process.exit(1);
+    }
+    execFileSync('tar', ['-xzf', target, '-C', ROOT_DIR]);
+    cmdKb(['ingest-docs']);
+    console.log(JSON.stringify({ ok: true, restored: filename }, null, 2));
+    return;
+  }
+  console.error('Usage: folio backup [list|create [label]|restore <file>]');
   process.exit(1);
+}
+
+function cmdSetupLlm(): void {
+  const freeMb = Math.round(os.freemem() / 1024 / 1024);
+  if (freeMb > 0 && freeMb < 1100) {
+    console.error(`Insufficient free RAM (${freeMb} MB < 1100 MB threshold) for safe GGUF download.`);
+    process.exit(1);
+  }
+  const binDir = path.join(ROOT_DIR, '.folio-data', 'bin');
+  const modelsDir = path.join(ROOT_DIR, '.folio-data', 'models');
+  const llamaBase = path.join(ROOT_DIR, '.folio-data', 'llama', 'llama-b12780');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(modelsDir, { recursive: true });
+
+  const wrapper = path.join(binDir, 'llama-completion');
+  if (!fs.existsSync(wrapper) || !fs.existsSync(path.join(llamaBase, 'llama-completion'))) {
+    const tarTmp = path.join(os.tmpdir(), `llama-b12780-${Date.now()}.tar.gz`);
+    console.log('Streaming llama.cpp b12780 binary...');
+    execFileSync(
+      'curl',
+      ['-fSL', 'https://github.com/ggml-org/llama.cpp/releases/download/b12780/llama-b12780-bin-ubuntu-x64.tar.gz', '-o', tarTmp],
+      { stdio: 'inherit' }
+    );
+    fs.mkdirSync(llamaBase, { recursive: true });
+    execFileSync('tar', ['-xzf', tarTmp, '-C', llamaBase, '--strip-components=1']);
+    fs.rmSync(tarTmp, { force: true });
+    fs.writeFileSync(
+      wrapper,
+      `#!/usr/bin/env bash\nexport LD_LIBRARY_PATH="${llamaBase}:\${LD_LIBRARY_PATH:-}"\nexec "${llamaBase}/llama-completion" "$@"\n`,
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(
+      path.join(binDir, 'llama-cli'),
+      `#!/usr/bin/env bash\nexport LD_LIBRARY_PATH="${llamaBase}:\${LD_LIBRARY_PATH:-}"\nexec "${llamaBase}/llama-cli" "$@"\n`,
+      { mode: 0o755 }
+    );
+  } else {
+    console.log('llama.cpp b12780 already present.');
+  }
+
+  const qwenPath = path.join(modelsDir, 'qwen2.5-0.5b-instruct-q4_k_m.gguf');
+  if (!fs.existsSync(qwenPath)) {
+    console.log('Streaming Qwen2.5-0.5B-Instruct Q4_K_M GGUF directly to disk...');
+    execFileSync(
+      'curl',
+      ['-fSL', 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf', '-o', `${qwenPath}.part`],
+      { stdio: 'inherit' }
+    );
+    fs.renameSync(`${qwenPath}.part`, qwenPath);
+  } else {
+    console.log('Qwen2.5-0.5B GGUF already present.');
+  }
+  cmdKb(['ingest-docs']);
+  console.log('Local LLM + Docs ready.');
+}
+
+function cmdDeploy(args: string[]): void {
+  const scriptPath = path.join(ROOT_DIR, 'scripts', 'deploy-gcloud.sh');
+  if (!fs.existsSync(scriptPath)) {
+    console.error('Error: scripts/deploy-gcloud.sh not found.');
+    process.exit(1);
+  }
+  const proc = spawnSync('bash', [scriptPath, ...args], {
+    cwd: ROOT_DIR,
+    stdio: 'inherit',
+  });
+  process.exit(proc.status ?? 0);
 }
 
 async function main(): Promise<void> {
@@ -323,6 +455,9 @@ async function main(): Promise<void> {
       break;
     case 'docs':
       cmdDocs(rest);
+      break;
+    case 'datasets':
+      cmdDatasets(rest);
       break;
     case 'changelog':
       cmdChangelog(rest);
@@ -344,6 +479,14 @@ async function main(): Promise<void> {
       break;
     case 'backup':
       cmdBackup(rest);
+      break;
+    case 'deploy':
+    case 'cloudrun':
+    case 'cloud-run':
+      cmdDeploy(rest);
+      break;
+    case 'setup-llm':
+      cmdSetupLlm();
       break;
     default:
       printHelp();

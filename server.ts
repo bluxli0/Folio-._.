@@ -8,6 +8,8 @@ import os from 'os';
 import path from 'path';
 import vm from 'vm';
 import { execFile, spawn } from 'child_process';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { fileURLToPath } from 'url';
 import * as esbuild from 'esbuild';
 import {
@@ -27,6 +29,7 @@ import {
   Type,
 } from '@google/genai';
 import { FOLIO_CHANGELOGS, FOLIO_CURRENT_VERSION } from './src/data/changelogs';
+import { ENGINE_DATASETS, type EngineDatasetId, searchEngineDatasets } from './src/data/engineDatasets';
 import { FOLIO_DOCS_SECTIONS, searchFolioDocs } from './src/data/folioDocs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1290,14 +1293,14 @@ ALWAYS match the artistic richness of the built-in Studio Demos (multi-layer atm
   - Glazes & Metals: \`url(#wetGlazeCyan)\`, \`url(#wetGlazePink)\`, \`url(#wetGlazeCaramel)\`, \`url(#wetGlazeEmerald)\`, \`url(#wetGlazePurple)\`, \`url(#wetGlazeCrimson)\`, \`url(#wetGlazeObsidian)\`, \`url(#metallicGold)\`, \`url(#metallicSteel)\`, \`url(#metallicCopper)\`, \`url(#metallicChrome)\`, \`url(#metallicRoseGold)\`, \`url(#iridescentHologram)\`, \`url(#glassSphere)\`, \`url(#sunsetSkyGrad)\`, \`url(#cyberNightGrad)\`, \`url(#auroraRibbonGrad)\`, \`url(#lavaMagmaGrad)\`.
   - Filters: \`url(#softGlow)\`, \`url(#neonBloom)\`, \`url(#tactileDoughWarp)\`, \`url(#paperGrain)\`, \`url(#claySculpt)\`, \`url(#watercolorBleed)\`, \`url(#motionBlurX)\`, \`url(#motionBlurY)\`, \`url(#frostedGlass)\`, \`url(#embossBevel)\`, \`url(#inkOutline)\`, \`url(#glitchSlice)\`.
 - **Brushes & 3D Shapes**: Vector strokes with \`"brush"\` (\`spray|charcoal|ribbon|sparkle|doubleline|stipple|neon|chalk|watercolor|marker|calligraphy|dashed|glow|pixel|rough|solid\`), procedural \`"particles"\` (\`circle|star|spark|snow|smoke|confetti|bubble\`), and 3D primitives \`"threeD"\` (\`sphere|cube|torus|cylinder|octahedron|icosahedron|cone|ring|capsule|prism|gear\`).
-- **Motion, Easing & Physics**: 36 unified easings + \`motion\` tags (\`x, y, rotation, scale, scaleX, scaleY, sway, bob, pulse, orbit, shake, flicker, spiral, bezierPath, trail\`), 2D rigid-body \`"physics"\` + \`"hitbox"\`, and 120+ unified math functions (\`sin, cos, tan, sinh, cosh, tanh, sinc, clamp, saturate, lerp, remap, smoothstep, smootherstep, gain, bias, impulse, gaussian, sigmoid, pingpong, sawtooth, triangle, square, pwm, noise, perlin1d, fbm, turbulence, ridges, voronoi1d, gravity, projectilex, projectiley, bouncepos, spring, dampedsine, pendulum, orbitx, orbity, lissajousx, lissajousy, aabbhit, circlehit, box3dhit, spherehit\`).
+- **Motion, Easing & Physics**: 36 unified easings + \`motion\` tags (\`x, y, rotation, scale, scaleX, scaleY, sway, bob, pulse, orbit, shake, flicker, spiral, bezierPath, trail\`), 2D rigid-body \`"physics"\` + \`"hitbox"\`, and 130+ unified math & Inverse Kinematics (IK) functions (\`sin, cos, tan, sinh, cosh, tanh, sinc, clamp, saturate, lerp, remap, smoothstep, smootherstep, gain, bias, impulse, gaussian, sigmoid, pingpong, sawtooth, triangle, square, pwm, noise, perlin1d, fbm, turbulence, ridges, voronoi1d, gravity, projectilex, projectiley, bouncepos, spring, dampedsine, pendulum, orbitx, orbity, lissajousx, lissajousy, aabbhit, circlehit, box3dhit, spherehit, ik2d_theta1, ik2d_theta2, ik2d_deg1, ik2d_deg2, ik2d_elbow_x, ik2d_elbow_y, ik3d_mid_x, ik3d_mid_y, ik3d_mid_z, lookat_yaw, lookat_pitch\`).
 - **Curves & Storyboard/Audio**: 21 math \`"curve"\` generators (\`hilbert, dragon, koch, lissajous, spirograph, rose, spiral, butterfly, cardioid, lemniscate, astroid, hypocycloid, epicycloid, fermat, archimedes, phyllotaxis, sinewave, fourier, bezier, catmull, starpolygon, graph\`), \`"storyboard"\` cameraCuts (\`wide, medium, closeup, dutch, overhead, orbit, zoomIn, zoomOut, panLeft, panRight, shake, tilt\`) + \`"uiAngle"\` (\`fpsBadge, reticle, letterbox\`), and \`"audio"\` with 20 presets (\`ambient_chime, sci_fi_arp, cyberpunk_arp, retro_8bit, crystal_bells, deep_drone, arcade_jump, laser_pulse, rain_noise, heartbeat, lofi_chord, quantum_pad, warp_riser, marimba, orchestral_brass, bounce, chimes, synth_pulse, bass_groove, glitch\`) or custom AST \`formula\` (\`fm, pm, ringmod, lfo, chorus, vibrato, tremolo, bitcrush, fold, softclip, midi2hz, chord3, chord4, pink, white\`).`;
 
   const PIXEL_ART_CAPABILITY_GUIDE = `
 STUDIO-GRADE PIXEL ENGINE v3 (\`\`\`pixelart — \`"format": "pixelart/v3"\`):
 ALWAYS match Studio Demo fidelity (multi-stop dithered gradients, layered procedural depth ops, specular highlights, and post shaders — NEVER emit blank squares or tiny 8×8 blobs):
 - **Canvas Size & Named Palettes**: Up to \`512×512\` (recommend \`64×64\` or \`128×128\` with \`frameCount: 16..24\`). Accepts explicit palette dicts/arrays OR named presets (\`"palette": "cyberpunk"|"pico8"|"endesga32"|"gameboy"|"sweetie16"|"fantasy24"|"synthwave"|"lava"|"ice"|"pastel"|"noir"|"forest"|"gold"\`).
-- **Gradients & 30+ Procedural Ops** (all accept math expressions with 120+ functions, \`opacity\`, \`blendMode: "normal"|"add"|"multiply"|"screen"|"overlay"\`, \`visibleFrom\`, \`visibleTo\`):
+- **Gradients & 30+ Procedural Ops** (all accept math expressions with 130+ math/IK functions, \`opacity\`, \`blendMode: "normal"|"add"|"multiply"|"screen"|"overlay"\`, \`visibleFrom\`, \`visibleTo\`):
   - \`gradients\`: \`linear\`, \`radial\`, \`conic\`, \`diamond\`, \`spiral\`, \`noise\` with \`dither: "bayer4"|"bayer8"|"bayer2"|"checker"|"halftone"\`.
   - \`backdrop\` & \`draw\` ops: \`gradient\`, \`aurora\`, \`stardust\`/\`particles\`, \`plasma\`, \`water\`/\`waves\`, \`fire\`/\`flame\`, \`rain\`, \`snow\`, \`lightning\`/\`bolt\`, \`graph\`/\`plot\`, \`sphere3d\` (Phong-shaded sphere), \`box3d\`, \`pyramid3d\`, \`torus3d\`, \`ring\`, \`arc\`, \`wedge\`, \`star\`, \`diamond\`, \`hexagon\`, \`regularpoly\`, \`roundrect\`, \`capsule\`, \`bezier\`, \`checker\`, \`grid\`, \`scanlines\`, \`dropshadow\`, \`specular\`, \`text\`/\`bitmaptext\` (5×7 pixel font), \`sprite\`/\`tile\`, \`mirror\`, \`outline\`, \`physicsball\`, \`physicsbox\`, \`hitbox\`, \`circle\`, \`ellipse\`, \`rect\`, \`polygon\`, \`line\`, \`pset\`.
 - **18 Post Shaders**: \`"shaders": [{ "type": "vignette"|"scanline"|"crt"|"chromatic"|"glow"|"bloom"|"posterize"|"dither"|"outline"|"halftone"|"sepia"|"invert"|"pixelate"|"glitch"|"emboss"|"edge"|"tint"|"duotone", "intensity": 0.45 }]\`.`;
@@ -1308,16 +1311,21 @@ Supports \`\`\`liquidmotion, \`\`\`liquiddrop, \`\`\`pixelmotion, and \`\`\`moti
 
   const EVO_ENGINE_CAPABILITY_GUIDE = `
 STUDIO-GRADE EVO 3D ENGINE (\`\`\`evo — \`"format": "evo/v1"\`):
-ALWAYS build rich multi-node PBR scenes matching the Studio Demos (never single bare cubes):
-- **Environments & Atmosphere**: \`"environment": "studio"|"neon"|"sunset"|"obsidian"|"void"|"cyberpunk"|"arctic"|"desert"|"cosmic"|"forest"|"vaporwave"|"midnight"|"goldenHour"\`, \`"fog": { "color", "density" }\`, \`"starfield": true|320\`, \`"exposure": 1.15\`, \`"camera": { "fov", "position", "target", "autoRotate", "autoRotateSpeed" }\`.
-- **29 Geometries**: \`box, sphere, torus, torusKnot, cylinder, cone, icosahedron, octahedron, dodecahedron, tetrahedron, prism, pyramid, helix, mobius, klein, lathe, gear, star3d, voxelGrid, particles3d, axes3d, wireCube, ring, plane, capsule, graph, surface, curve, group\`.
-- **14 PBR Material Presets & Tags**: \`material.preset\`: \`glass|chrome|gold|neon|hologram|clay|toon|carbon|obsidian|lava|ice|emerald|copper|pearl\`, plus \`gradient: { colors, axis }\`, \`iridescence\`, \`sheen\`, \`flatShading\`, \`blending\`, \`emissivePulse\`, \`usePixelTexture\`.
-- **Motion, Keyframes & Physics**: 120+ math funcs & 36 easings; \`motion\` (\`x, y, z, rx, ry, rz, spinX, spinY, spinZ, bob, waveY, bounceAmp, sway, orbit, orbitY, orbitX, lissajous, spiral, pulse\`), \`repeat\`, \`follow\`, rigid-body \`physics\` (\`velocity, gravity, drag, attractor, restitution, floorY, walls\`) + \`hitbox\`, \`storyboard.shots\`, and \`audio\`.`;
+ALWAYS build rich multi-node PBR scenes matching the Studio Demos (NEVER emit cube-only placeholders — compose sculpted geometries like \`klein, mobius, torusKnot, helix, lathe, metaball, gear, icosahedron, octahedron, terrain, ikJoint\` unless a cubic object is explicitly requested):
+- **Environments & Atmosphere**: \`"environment": "studio"|"neon"|"sunset"|"obsidian"|"void"|"cyberpunk"|"arctic"|"desert"|"cosmic"|"forest"|"vaporwave"|"midnight"|"goldenHour"\`, \`"fog": { "color", "density" }\`, \`"starfield": true | 320 | { "count": 280, "radius": 65, "color": "#a5d8ff" }\`, \`"camera": { "fov", "position", "target", "exposure": 1.15, "autoRotate", "autoRotateSpeed" }\`.
+- **33 Geometries (\`type\`, \`geometry\`, or \`shape\`)**: \`box, sphere, torus, torusKnot, cylinder, cone, icosahedron, octahedron, dodecahedron, tetrahedron, prism, pyramid, helix, mobius, klein, lathe, gear, star3d, voxelGrid, particles3d, axes3d, wireCube, ring, plane, capsule, graph, surface, curve, group, terrain, metaball, customMesh (with meshData: { vertices, faces }), ikJoint\`.
+- **14 PBR Material Presets & Tags**: \`material.preset\`: \`glass|chrome|gold|neon|hologram|clay|toon|carbon|obsidian|lava|ice|emerald|copper|pearl\`, plus \`gradient: { colors, axis }\`, \`iridescence\`, \`sheen\`, \`flatShading\`, \`blending\`, \`emissivePulse\` (boolean | number | { min, max, freq }), \`usePixelTexture\`.
+- **Blender-Grade Rigging, IK, Modifiers & Simulation**:
+  - **FABRIK Inverse Kinematics**: Top-level \`"ikChains": [{ "nodes": ["shoulder", "elbow", "wrist"], "target"|"targetId": "target_orb" | [x, y, z], "pole": [px, py, pz], "iterations": 6..10, "segmentLengths": [1.2, 1.1], "aimNodes": true }]\`.
+  - **Vertex Modifiers & Morph Targets**: Stacked \`"modifiers": [{ "type": "bend"|"twist"|"taper"|"wave"|"noise"|"squash"|"mirror", "strength", "axis", "frequency", "speed" }]\` & \`"morphTargets": [{ "name", "weight", "scale", "twist", "bend", "bulge" }]\`.
+  - **Constraints, Spline Follow & NLA Action Strips**: Node \`"constraints": [{ "type": "trackTo"|"copyRotation"|"copyLocation"|"limitDistance", "target"|"targetId": "id", "influence": 1, "maxDistance": 5.2 }]\`, \`"pathFollow": { "points": [[x,y,z]...], "closed": true, "orientToPath": true, "speed": 0.42 }\`, \`"actionStrips": [{ "start", "end", "motion", "blend": 0.25 }]\`.
+  - **Soft-Body, Force Fields & Triggers**: Node \`"softBody": { "stiffness", "damping", "squash", "squashOnBounce", "wobble" }\`; BOTH node-level \`forceField\`/\`triggerZone\` AND top-level arrays \`"forceFields": [{ "id", "type": "attractor"|"repulsor"|"vortex", "position", "strength", "radius" }]\` + \`"triggers": [{ "id", "position", "radius", "targetId", "action": "pulse"|"bounce"|"glow"|"reverse" }]\`.
+- **Motion, Storyboard & Physics**: 130+ math/IK funcs (\`ik2d_theta1/2, ik2d_deg1/2, ik2d_elbow_x/y, ik3d_mid_x/y/z, lookat_yaw, lookat_pitch\`) & 36 easings; \`storyboard.shots\` accepts \`{ name, position, target, duration }\` (seconds) OR normalized \`{ start, end, cameraCut }\`; rigid-body \`physics\`, \`hitbox\`, and \`audio\`.`;
 
   const MODEL_ENGINE_CAPABILITY_GUIDE = `
 STUDIO-GRADE 3D ENGINE / MODEL PIPELINES:
-- **EVO 3D (\`\`\`evo)**: Full PBR 3D motion (29 geometries, 14 material presets, 13 environments, rigid-body physics/attractor/hitboxes, storyboard camera cuts, WebAudio).
-- **Three.js (\`\`\`threejs)**: Structured JSON with 27 shapes (\`box, sphere, torus, torusKnot, cylinder, cone, icosahedron, dodecahedron, octahedron, tetrahedron, capsule, ring, plane, pyramid, prism, helix, mobius, gear, star, crystal, gridFloor, particleCloud, splineTube, terrain, dnaHelix, waveSurface, graphRibbon\`), 20 materials (\`pbr, glass, gold, chrome, copper, carbon, obsidian, lava, ice, emerald, hologram, iridescent, matte, clay, toon, neon, wireframe, normal, glassTinted, additiveGlow\`), 12 lighting presets (\`studio, sunset, cyberpunk, dramatic, matrix, vaporwave, noir, arctic, volcanic, emeraldForest, goldenHour, void\`), 17 animations (\`rotate, bounce, physicsBounce, pulse, breathing, float, orbit, figure8, lissajous, spiral, pendulum, wobble, spinX, spinZ, spring, explodeLoop, chaos\`), \`repeat\`, \`starfield\`, \`fogDensity\`, \`physics.drag/attractor\`, and \`hitbox\`.
+- **EVO 3D (\`\`\`evo)**: Full PBR & Blender-grade 3D engine (33 geometries using \`type\`/\`geometry\`/\`shape\`, including \`klein, mobius, torusKnot, terrain, metaball, customMesh, ikJoint\`, 14 material presets, 13 environments, FABRIK \`ikChains\`, vertex \`modifiers\` + \`morphTargets\`, \`constraints\`, \`pathFollow\`, \`actionStrips\`, \`softBody\`, top-level & per-node \`forceFields\`/\`triggers\`, object \`starfield\`, \`camera.exposure\`, rigid-body physics/hitboxes, storyboard shots, WebAudio, and 130+ math/IK functions). Never default to plain cube-only scenes!
+- **Three.js (\`\`\`threejs)**: Structured JSON with sculpted shapes (\`icosahedron, torusKnot, klein, metaball, ikJoint, lathe, star3d, box, sphere, torus, cylinder, cone, dodecahedron, octahedron, tetrahedron, capsule, ring, plane, pyramid, prism, helix, mobius, gear, crystal, gridFloor, particleCloud, splineTube, terrain, dnaHelix, waveSurface, graphRibbon\`), 20 materials, 12 lighting presets, 17 animations, \`repeat\`, \`starfield\`, \`fogDensity\`, \`physics.drag/attractor\`, \`hitbox\`, **FABRIK \`ikChains\`**, **\`trackTo\`** aim constraint, and **11 IK math helpers** (\`ik2d_theta1/2, ik2d_deg1/2, ik2d_elbow_x/y, ik3d_mid_x/y/z, lookat_yaw, lookat_pitch\`).
 - **Blockbench (\`\`\`bbmodel)** & **Voxels (\`\`\`voxels)** & **Headless Blender CLI (\`blender_cli\`)**: Supported natively.`;
 
   const RICH_MEDIA_EXPLAINER_GUIDE = `
@@ -1329,12 +1337,12 @@ When explaining concepts, giving tutorials, comparing data, or teaching:
   const CREATIVE_ENGINE_PIPELINE_GUIDE = `
 CREATIVE ORCHESTRATOR & STUDIO DEMO QUALITY PROTOCOL:
 Whenever generating \`stopmotion\`, \`pixelart\`, \`evo\`, \`threejs\`, \`liquidmotion\`, \`liquiddrop\`, \`pixelmotion\`, \`motiondrop\`, or \`bbmodel\`:
-1. Match **Engine Studio Demo quality** every single time — NEVER output minimal 1-primitive placeholders! Always compose multi-layered atmospheric backdrops, multi-stop gradients (\`gradient\`, \`bayer4/bayer8\`, \`wetGlaze*\`), dynamic contact shadows & Marker Trick specular highlights, smooth easing or physics kinematics, particle depth, storyboard camera framing, and matching math audio.
+1. Match **Engine Studio Demo quality** every single time — NEVER output minimal 1-primitive placeholders! Always compose multi-layered atmospheric backdrops, multi-stop gradients (\`gradient\`, \`bayer4/bayer8\`, \`wetGlaze*\`), dynamic contact shadows & Marker Trick specular highlights, smooth easing or physics/IK kinematics, particle depth, storyboard camera framing, and matching math audio.
 2. Always call \`validate_creative_code\` before emitting your final JSON block.`;
 
   const COMPACT_STUDIO_CAPABILITY_SUMMARY = `
 FOLIO ${FOLIO_CURRENT_VERSION} RUNTIME OVERVIEW:
-- Visual & Audio Code Blocks supported inline: \`\`\`evo (29 3D geometries + 14 PBR presets + physics/hitboxes), \`\`\`stopmotion (v3 + 16 vector brushes + 21 curves + 22 studio defs + 120 math funcs + 36 easings + 20 audio presets), \`\`\`pixelart (up to 512px + 30 procedural draw ops + 18 post shaders + named palettes + 5x7 bitmap font), \`\`\`liquidmotion / \`\`\`liquiddrop / \`\`\`pixelmotion / \`\`\`motiondrop (hybrids), \`\`\`threejs (27 shapes + 20 PBR materials + 12 lighting rigs + 17 animations), \`\`\`bbmodel, \`\`\`chart, \`\`\`quiz, \`\`\`html / \`\`\`tsx.
+- Visual & Audio Code Blocks supported inline: \`\`\`evo (33 3D geometries + FABRIK IK chains + modifiers/morphTargets/constraints/pathFollow/softBody/forceFields/triggers + 14 PBR presets + physics/hitboxes), \`\`\`stopmotion (v3 + 16 vector brushes + 21 curves + 22 studio defs + 130+ math/IK funcs + 36 easings + 20 audio presets), \`\`\`pixelart (up to 512px + 30 procedural draw ops + 18 post shaders + named palettes + 5x7 bitmap font), \`\`\`liquidmotion / \`\`\`liquiddrop / \`\`\`pixelmotion / \`\`\`motiondrop (hybrids), \`\`\`threejs (27 shapes + 20 PBR materials + 12 lighting rigs + 17 animations + FABRIK IK + trackTo + 11 IK math helpers), \`\`\`bbmodel, \`\`\`chart, \`\`\`quiz, \`\`\`html / \`\`\`tsx.
 - Tools: \`folio_docs_lookup\` (authoritative Folio Docs/SDK/CLI/Changelog search), GitHub & \`gh\` CLI, \`antigravity_cli\`, workspace files/scripts, \`blender_cli\` (with RAM watchdog & pure-Python OBJ fallback), \`stock_media_search\`, \`namecom_domain_sim\`, \`validate_creative_code\`.`;
 
   const ghCliPath = getGitHubCliBinary();
@@ -1364,7 +1372,7 @@ FOLIO ${FOLIO_CURRENT_VERSION} RUNTIME OVERVIEW:
 LIVE ENVIRONMENT STATE:
 - Engine: ${FOLIO_CURRENT_VERSION} (Codename: Folio Core)
 - CURRENT ACTIVE VERSION (AUTHORITATIVE): ${FOLIO_CURRENT_VERSION}. You are running ${FOLIO_CURRENT_VERSION} (upgraded from v4.1 Folio Zero and v4.0 OXYGEN). Always confirm **${FOLIO_CURRENT_VERSION}** with Official TypeScript & Python SDKs, \`folio\` CLI, Disk-Sharded SQLite FTS5/BM25 Knowledge Base (\`folio_docs_lookup\`), 4 GB RAM Watchdog & Snapshot Backups, Flash 4 / Omni Flash 1.2 / Neo 4 Python rule AI, EVO 3D Engine, Stop Motion v3, and Pixel Engine v3.
-- Memory Watchdog: ${getAvailableRamMb()} MB free RAM (${getMemInfoStats().totalRamMb} MB total, swap ${getMemInfoStats().swapTotalMb} MB).
+- Memory Watchdog: ${getAvailableRamMb()} MB free RAM (${getMemInfoStats().totalRamMb} MB total, swap ${getMemInfoStats().swapTotalMb} MB — unprivileged container overlay caps RAM at 4,096 MB / 0 swap; move Folio via included Dockerfile to Cloud Run 8–32 GB, a Linux VPS with NVMe swapfile, or set FOLIO_REMOTE_LLM_URL).
 - GitHub: ${
     ghUserSummary
       ? `CONNECTED as @${ghUserSummary.login}${ghUserSummary.name ? ` (${ghUserSummary.name})` : ''}`
@@ -7462,6 +7470,7 @@ print("Generated fallback_scene.obj and fallback_scene.mtl")
             (Array.isArray(sceneObj?.nodes) && sceneObj.nodes.length > 0) ||
             Boolean(parsed.groups && typeof parsed.groups === 'object') ||
             typeof parsed.type === 'string' ||
+            typeof parsed.geometry === 'string' ||
             typeof parsed.shape === 'string';
           if (!hasObjects) {
             errors.push('evo requires a non-empty "nodes" (or "objects" / "layers" / "elements") array or primitive node.');
@@ -7470,6 +7479,41 @@ print("Generated fallback_scene.obj and fallback_scene.mtl")
           if (!Number.isFinite(fps) || fps < 1 || fps > 60) {
             errors.push('evo fps must be between 1 and 60.');
           }
+          if (Array.isArray(parsed.ikChains)) {
+            for (const chain of parsed.ikChains as Array<Record<string, unknown>>) {
+              if (!Array.isArray(chain?.nodes) || chain.nodes.length < 2) {
+                errors.push('Each entry in evo ikChains requires a "nodes" array with at least 2 joint IDs.');
+              }
+            }
+          }
+          if (Array.isArray(parsed.forceFields)) {
+            for (const ff of parsed.forceFields as Array<Record<string, unknown>>) {
+              if (!ff || typeof ff !== 'object') {
+                errors.push('Each entry in evo forceFields must be an object.');
+              }
+            }
+          }
+          if (Array.isArray(parsed.triggers)) {
+            for (const trig of parsed.triggers as Array<Record<string, unknown>>) {
+              if (!trig || typeof trig !== 'object') {
+                errors.push('Each entry in evo triggers must be an object.');
+              }
+            }
+          }
+          const checkNodeArr = (arr: unknown) => {
+            if (!Array.isArray(arr)) return;
+            for (const rawNode of arr as Array<Record<string, unknown>>) {
+              const geom = rawNode?.type || rawNode?.geometry || rawNode?.shape;
+              if (geom === 'customMesh') {
+                const md = rawNode.meshData as Record<string, unknown> | undefined;
+                if (!md || !Array.isArray(md.vertices) || md.vertices.length === 0) {
+                  warnings.push(`customMesh node "${String(rawNode.id || 'unnamed')}" is missing meshData.vertices; using fallback polyhedron.`);
+                }
+              }
+            }
+          };
+          checkNodeArr(parsed.nodes);
+          checkNodeArr(sceneObj?.nodes);
         } else if (kind === 'bbmodel') {
           if (!Array.isArray(parsed.elements) || parsed.elements.length === 0) {
             errors.push('bbmodel requires at least one cube in "elements".');
@@ -8565,6 +8609,73 @@ app.get('/api/docs', (req: Request, res: Response) => {
   });
 });
 
+app.get('/api/datasets', (req: Request, res: Response) => {
+  const validEngines: EngineDatasetId[] = ['evo3d', 'threejs', 'stopmotion', 'pixelart', 'hybrid', 'ik-math'];
+  const rawEngine = typeof req.query.engine === 'string' ? req.query.engine.trim().toLowerCase() : '';
+  const engine = validEngines.includes(rawEngine as EngineDatasetId) ? (rawEngine as EngineDatasetId) : undefined;
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const datasets = q
+    ? searchEngineDatasets(q, engine)
+    : engine
+    ? ENGINE_DATASETS.filter((d) => d.id === engine)
+    : ENGINE_DATASETS;
+  res.json({
+    ok: true,
+    version: FOLIO_CURRENT_VERSION,
+    engine: engine || 'all',
+    query: q,
+    total: ENGINE_DATASETS.length,
+    datasets,
+  });
+});
+
+app.post('/api/datasets/train', async (_req: Request, res: Response) => {
+  try {
+    const trainerScript = path.join(__dirname, 'python', 'neo4_trainer.py');
+    if (!fs.existsSync(trainerScript)) {
+      res.status(404).json({ ok: false, error: 'python/neo4_trainer.py not found.' });
+      return;
+    }
+    const payload = JSON.stringify({ datasets: ENGINE_DATASETS, version: FOLIO_CURRENT_VERSION });
+    const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      const cp = spawn('python3', [trainerScript, '--ingest-engine-datasets'], {
+        cwd: __dirname,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      cp.stdout.on('data', (d) => { stdout += d.toString(); });
+      cp.stderr.on('data', (d) => { stderr += d.toString(); });
+      cp.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
+      cp.on('error', (err) => resolve({ code: 1, stdout, stderr: err.message }));
+      cp.stdin.write(payload);
+      cp.stdin.end();
+    });
+    if (result.code !== 0) {
+      res.status(500).json({ ok: false, error: result.stderr || 'Engine dataset training failed.' });
+      return;
+    }
+    await ensureFolioDocsIndexedOnBoot(true);
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+    } catch {
+      parsed = { raw: result.stdout.trim() };
+    }
+    res.json({
+      ok: true,
+      datasetsCount: ENGINE_DATASETS.length,
+      ...parsed,
+      health: getSystemHealthSnapshot(),
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to train Neo 4 on engine datasets.',
+    });
+  }
+});
+
 app.get('/api/changelog', (_req: Request, res: Response) => {
   res.json({
     ok: true,
@@ -8599,6 +8710,126 @@ app.post('/api/system/backup', async (req: Request, res: Response) => {
     backup: created,
     backups: listFolioBackups(),
   });
+});
+
+app.post('/api/system/backup/restore', async (req: Request, res: Response) => {
+  const filename = typeof req.body?.filename === 'string' ? path.basename(req.body.filename.trim()) : '';
+  if (!filename || !filename.endsWith('.tar.gz') || filename.includes('..') || filename.includes('/')) {
+    res.status(400).json({ ok: false, error: 'Valid backup .tar.gz filename is required.' });
+    return;
+  }
+  const archivePath = path.join(FOLIO_BACKUPS_DIR, filename);
+  if (!fs.existsSync(archivePath)) {
+    res.status(404).json({ ok: false, error: `Backup archive not found: ${filename}` });
+    return;
+  }
+  const exitCode = await new Promise<number>((resolve) => {
+    const cp = spawn('tar', ['-xzf', archivePath, '-C', __dirname], { stdio: 'ignore' });
+    cp.on('close', (c) => resolve(c ?? 1));
+    cp.on('error', () => resolve(1));
+  });
+  if (exitCode !== 0) {
+    res.status(500).json({ ok: false, error: 'Failed to extract backup archive.' });
+    return;
+  }
+  await ensureFolioDocsIndexedOnBoot(true);
+  res.json({ ok: true, restored: filename, health: getSystemHealthSnapshot() });
+});
+
+async function streamDownloadToFile(url: string, destPath: string): Promise<void> {
+  await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+  const tmpPath = `${destPath}.part-${Date.now()}`;
+  const resp = await fetch(url, { headers: { 'User-Agent': 'Folio-Studio/4.2' }, redirect: 'follow' });
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Download failed (${resp.status}) for ${url}`);
+  }
+  const nodeReadable = Readable.fromWeb(resp.body as unknown as import('stream/web').ReadableStream);
+  await pipeline(nodeReadable, fs.createWriteStream(tmpPath));
+  await fs.promises.rename(tmpPath, destPath);
+}
+
+app.post('/api/system/restore-llm', async (_req: Request, res: Response) => {
+  try {
+    await ensureFolioDocsIndexedOnBoot(true);
+    const freeMb = getAvailableRamMb();
+    const modelsDir = path.resolve(__dirname, '.folio-data', 'models');
+    const llamaBase = path.resolve(__dirname, '.folio-data', 'llama', 'llama-b12780');
+    const llamaWrapper = path.join(FOLIO_BIN_DIR, 'llama-completion');
+    const qwen05bPath = path.join(modelsDir, 'qwen2.5-0.5b-instruct-q4_k_m.gguf');
+
+    if (os.platform() !== 'linux' || os.arch() !== 'x64') {
+      res.status(400).json({ ok: false, error: 'Automated llama.cpp binary restore is supported on Linux x64 hosts.' });
+      return;
+    }
+
+    const actions: string[] = ['folio_docs.db verified'];
+
+    if (!fs.existsSync(llamaWrapper) || !fs.existsSync(path.join(llamaBase, 'llama-completion'))) {
+      if (freeMb > 0 && freeMb < 900) {
+        res.status(507).json({
+          ok: false,
+          error: `Only ${freeMb} MB free RAM available; wait a moment before extracting llama.cpp binary.`,
+        });
+        return;
+      }
+      const tarTmp = path.join(os.tmpdir(), `llama-b12780-${Date.now()}.tar.gz`);
+      try {
+        await streamDownloadToFile(
+          'https://github.com/ggml-org/llama.cpp/releases/download/b12780/llama-b12780-bin-ubuntu-x64.tar.gz',
+          tarTmp
+        );
+        await fs.promises.mkdir(llamaBase, { recursive: true });
+        await fs.promises.mkdir(FOLIO_BIN_DIR, { recursive: true });
+        const extCode = await new Promise<number>((resolve) => {
+          const cp = spawn('tar', ['-xzf', tarTmp, '-C', llamaBase, '--strip-components=1'], { stdio: 'ignore' });
+          cp.on('close', (c) => resolve(c ?? 1));
+          cp.on('error', () => resolve(1));
+        });
+        if (extCode !== 0) {
+          throw new Error('Failed to extract llama-b12780 tarball');
+        }
+        const wrapperBody = `#!/usr/bin/env bash\nexport LD_LIBRARY_PATH="${llamaBase}:\${LD_LIBRARY_PATH:-}"\nexec "${llamaBase}/llama-completion" "$@"\n`;
+        await fs.promises.writeFile(llamaWrapper, wrapperBody, { mode: 0o755 });
+        const cliWrapper = path.join(FOLIO_BIN_DIR, 'llama-cli');
+        const cliBody = `#!/usr/bin/env bash\nexport LD_LIBRARY_PATH="${llamaBase}:\${LD_LIBRARY_PATH:-}"\nexec "${llamaBase}/llama-cli" "$@"\n`;
+        await fs.promises.writeFile(cliWrapper, cliBody, { mode: 0o755 });
+        actions.push('llama.cpp b12780 installed');
+      } finally {
+        await fs.promises.rm(tarTmp, { force: true }).catch(() => {});
+      }
+    } else {
+      actions.push('llama.cpp b12780 already present');
+    }
+
+    if (!fs.existsSync(qwen05bPath)) {
+      const currentFreeMb = getAvailableRamMb();
+      if (currentFreeMb > 0 && currentFreeMb < 1100) {
+        res.status(507).json({
+          ok: false,
+          error: `Only ${currentFreeMb} MB free RAM; need >=1100 MB to safely stream Qwen2.5-0.5B GGUF.`,
+        });
+        return;
+      }
+      await streamDownloadToFile(
+        'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf',
+        qwen05bPath
+      );
+      actions.push('Qwen2.5-0.5B GGUF streamed to disk');
+    } else {
+      actions.push('Qwen2.5-0.5B GGUF already present');
+    }
+
+    res.json({
+      ok: true,
+      actions,
+      health: getSystemHealthSnapshot(),
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to restore Local LLM & Docs.',
+    });
+  }
 });
 
 function getBlenderBinary(): string | null {
@@ -8673,16 +8904,17 @@ async function ensureGitHubCliInstalled() {
   }
 }
 
-async function ensureFolioDocsIndexedOnBoot(): Promise<void> {
+async function ensureFolioDocsIndexedOnBoot(force = false): Promise<void> {
   try {
     fs.mkdirSync(FOLIO_NEO4_DIR, { recursive: true });
     const docsDbPath = path.join(FOLIO_NEO4_DIR, 'folio_docs.db');
-    if (fs.existsSync(docsDbPath) && fs.statSync(docsDbPath).size > 4096) return;
+    if (!force && fs.existsSync(docsDbPath) && fs.statSync(docsDbPath).size > 4096) return;
     const trainerScript = path.join(__dirname, 'python', 'neo4_trainer.py');
     if (!fs.existsSync(trainerScript)) return;
     const payload = JSON.stringify({
       sections: FOLIO_DOCS_SECTIONS,
       changelogs: FOLIO_CHANGELOGS,
+      datasets: ENGINE_DATASETS,
       version: FOLIO_CURRENT_VERSION,
     });
     const child = spawn('python3', [trainerScript, '--ingest-folio-docs'], {

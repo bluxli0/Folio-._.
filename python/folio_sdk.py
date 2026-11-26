@@ -25,6 +25,48 @@ from typing import Any, Dict, List, Optional
 
 FOLIO_SDK_VERSION = "4.2.0"
 
+ENGINE_DATASET_PROFILES: Dict[str, Dict[str, Any]] = {
+    "evo3d": {
+        "format": "evo/v1",
+        "geometries": ["klein", "mobius", "torusKnot", "helix", "lathe", "metaball", "terrain", "gear", "icosahedron", "octahedron", "ikJoint", "customMesh"],
+        "presets": ["hologram", "chrome", "neon", "lava", "obsidian", "copper", "emerald", "gold", "glass", "carbon", "pearl", "ice"],
+        "defaults": {"ikIterations": 10, "attractorStrength": 2.4, "triggerRadius": 3.5, "exposure": 1.15},
+    },
+    "threejs": {
+        "format": "threejs/v1",
+        "shapes": ["torusKnot", "helix", "dnaHelix", "gear", "waveSurface", "crystal", "star", "terrain", "icosahedron", "klein", "metaball", "ikJoint"],
+        "defaults": {"fogDensity": 0.028, "ikIterations": 8, "cameraFov": 48},
+    },
+    "stopmotion": {
+        "format": "stopmotion/v3",
+        "curves": ["spirograph", "lissajous", "hilbert", "rose", "butterfly", "phyllotaxis", "fourier"],
+        "brushes": ["neon", "sparkle", "calligraphy", "ribbon", "watercolor", "spray"],
+        "defaults": {"fps": 24, "durationSec": 4.0},
+    },
+    "pixelart": {
+        "format": "pixelart/v3",
+        "palettes": ["cyberpunk", "synthwave", "pico8", "sweetie16", "endesga32", "fantasy24"],
+        "dithers": ["bayer4", "bayer8", "bayer2", "checker", "halftone"],
+        "defaults": {"width": 128, "height": 128, "frameCount": 16, "fps": 12},
+    },
+    "hybrid": {
+        "format": "liquidmotion/v1",
+        "blendModes": ["screen", "add", "overlay", "normal"],
+        "defaults": {"pixelBackdrop": "160x90", "pixelScale": 2, "pixelOpacity": 0.9, "letterbox": 22},
+    },
+    "ik-math": {
+        "format": "math-ast",
+        "functions": ["ik2d_theta1", "ik2d_theta2", "ik2d_deg1", "ik2d_deg2", "ik2d_elbow_x", "ik2d_elbow_y", "ik3d_mid_x", "ik3d_mid_y", "ik3d_mid_z", "lookat_yaw", "lookat_pitch"],
+        "defaults": {"l1": 110, "l2": 95, "bend": 1},
+    },
+}
+
+
+def get_engine_datasets(engine_id: Optional[str] = None) -> Dict[str, Any]:
+    if engine_id:
+        return ENGINE_DATASET_PROFILES.get(engine_id, {})
+    return ENGINE_DATASET_PROFILES
+
 
 class MemoryGuard:
     """Monitors RAM and disk availability on 4 GB / constrained containers."""
@@ -266,6 +308,18 @@ class FolioClient:
         q = f"?q={urllib.request.quote(query)}" if query else ""
         return self._get(f"/api/docs{q}")
 
+    def datasets(self, engine: str = "", query: str = "") -> Dict[str, Any]:
+        params = []
+        if engine:
+            params.append(f"engine={urllib.request.quote(engine)}")
+        if query:
+            params.append(f"q={urllib.request.quote(query)}")
+        qs = ("?" + "&".join(params)) if params else ""
+        return self._get(f"/api/datasets{qs}")
+
+    def train_datasets(self) -> Dict[str, Any]:
+        return self._post("/api/datasets/train", {})
+
     def changelog(self) -> Dict[str, Any]:
         return self._get("/api/changelog")
 
@@ -297,7 +351,7 @@ class FolioClient:
 class EvoBuilder:
     """Schema-safe EVO 3D builder."""
 
-    def __init__(self, title: str, environment: str = "cyberpunk", starfield: bool = True) -> None:
+    def __init__(self, title: str, environment: str = "cyberpunk", starfield: Any = True) -> None:
         self.spec: Dict[str, Any] = {
             "format": "evo/v1",
             "title": title,
@@ -312,8 +366,64 @@ class EvoBuilder:
             "nodes": [],
         }
 
-    def add_node(self, node_id: str, node_type: str = "sphere", **kwargs: Any) -> "EvoBuilder":
+    def set_camera(self, position: List[float], target: Optional[List[float]] = None, fov: float = 52.0, exposure: Optional[float] = None) -> "EvoBuilder":
+        cam: Dict[str, Any] = {"fov": fov, "position": position, "target": target or [0, 1.5, 0]}
+        if exposure is not None:
+            cam["exposure"] = exposure
+        self.spec["camera"] = cam
+        return self
+
+    def add_node(self, node_id: str, node_type: str = "icosahedron", **kwargs: Any) -> "EvoBuilder":
         self.spec["nodes"].append({"id": node_id, "type": node_type, **kwargs})
+        return self
+
+    def add_ik_chain(
+        self,
+        nodes: List[str],
+        target_id: Optional[str] = None,
+        target_pos: Optional[Any] = None,
+        iterations: int = 8,
+        pole: Optional[List[float]] = None,
+        aim_nodes: bool = True,
+    ) -> "EvoBuilder":
+        chain: Dict[str, Any] = {
+            "nodes": nodes,
+            "iterations": iterations,
+            "aimNodes": aim_nodes,
+        }
+        if target_id:
+            chain["targetId"] = target_id
+        if target_pos is not None:
+            chain["targetPos"] = target_pos
+        if pole is not None:
+            chain["pole"] = pole
+        self.spec.setdefault("ikChains", []).append(chain)
+        return self
+
+    def add_force_field(self, field_id: str, field_type: str = "attractor", position: Optional[List[float]] = None, strength: float = 2.4, radius: float = 10.0) -> "EvoBuilder":
+        self.spec.setdefault("forceFields", []).append({
+            "id": field_id,
+            "type": field_type,
+            "position": position or [0, 2.2, 0],
+            "strength": strength,
+            "radius": radius,
+        })
+        return self
+
+    def add_trigger(self, trigger_id: str, position: Optional[List[float]] = None, radius: float = 3.5, target_id: Optional[str] = None, action: str = "pulse") -> "EvoBuilder":
+        trig: Dict[str, Any] = {
+            "id": trigger_id,
+            "position": position or [0, 2.2, 0],
+            "radius": radius,
+            "action": action,
+        }
+        if target_id:
+            trig["targetId"] = target_id
+        self.spec.setdefault("triggers", []).append(trig)
+        return self
+
+    def set_storyboard(self, shots: List[Dict[str, Any]]) -> "EvoBuilder":
+        self.spec["storyboard"] = {"shots": shots}
         return self
 
     def build(self) -> Dict[str, Any]:
@@ -381,6 +491,15 @@ class ThreeJSBuilder:
 
     def add_object(self, obj_id: str, shape: str = "helix", **kwargs: Any) -> "ThreeJSBuilder":
         self.spec["objects"].append({"id": obj_id, "shape": shape, **kwargs})
+        return self
+
+    def add_ik_chain(self, nodes: List[str], target_id: Optional[str] = None, target_pos: Optional[List[float]] = None) -> "ThreeJSBuilder":
+        chain: Dict[str, Any] = {"nodes": nodes, "iterations": 8, "aimNodes": True}
+        if target_id:
+            chain["targetId"] = target_id
+        if target_pos is not None:
+            chain["targetPos"] = target_pos
+        self.spec.setdefault("ikChains", []).append(chain)
         return self
 
     def to_markdown(self) -> str:

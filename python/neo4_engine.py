@@ -1756,6 +1756,152 @@ def try_solve_math_or_physics(prompt: str) -> Optional[Dict[str, Any]]:
 
 
 def synthesize_creative_or_code(user_text: str, low: str, thinking_mode: str, pure_code: bool) -> Tuple[str, str]:
+    # 0. Chrono-Singularity Manifold (Hardest EVO Architecture)
+    if any(k in low for k in ("chrono", "singularity", "manifold", "klein", "mobius", "non-euclidean", "hardest")):
+        chrono_obj = {
+            "format": "evo/v1",
+            "title": "Chrono-Singularity Manifold: Hardest EVO Architecture",
+            "environment": "cosmic",
+            "camera": {
+                "fov": 52,
+                "position": [0, 6.5, 16],
+                "target": [0, 1.5, 0],
+                "exposure": 1.15,
+            },
+            "fog": {
+                "color": "#050714",
+                "density": 0.022,
+            },
+            "starfield": {
+                "count": 280,
+                "radius": 65,
+                "color": "#a5d8ff",
+            },
+            "nodes": [
+                {
+                    "id": "singularity_core",
+                    "geometry": "klein",
+                    "position": [0, 2.2, 0],
+                    "scale": [1.35, 1.35, 1.35],
+                    "material": {
+                        "preset": "hologram",
+                        "color": "#00f5d4",
+                        "emissive": "#00bbf9",
+                        "emissivePulse": 0.75,
+                        "sheen": 1.0,
+                    },
+                    "modifiers": [
+                        {"type": "twist", "axis": "y", "strength": 1.8, "speed": 0.9},
+                        {"type": "wave", "axis": "x", "strength": 0.28, "frequency": 3.5, "speed": 2.2},
+                        {"type": "noise", "axis": "z", "strength": 0.14, "frequency": 4.0, "speed": 1.4},
+                    ],
+                    "morphTargets": [
+                        {"name": "breathe", "scale": [1.18, 0.88, 1.18], "twist": 0.6, "bulge": 0.35, "weight": 0.65}
+                    ],
+                    "motion": {"spinY": 0.45, "spinX": 0.18},
+                },
+                {
+                    "id": "mobius_halo",
+                    "geometry": "mobius",
+                    "position": [0, 2.2, 0],
+                    "scale": [2.4, 2.4, 2.4],
+                    "material": {"preset": "chrome", "color": "#e0aaff", "sheen": 0.9},
+                    "modifiers": [
+                        {"type": "bend", "axis": "z", "strength": 0.45, "speed": 1.1},
+                        {"type": "taper", "axis": "y", "strength": 0.25},
+                    ],
+                    "motion": {"spinZ": 0.35, "spinY": -0.25},
+                },
+                {
+                    "id": "hyper_knot_cage",
+                    "geometry": "torusKnot",
+                    "position": [0, 2.2, 0],
+                    "scale": [1.8, 1.8, 1.8],
+                    "material": {"preset": "neon", "color": "#ff006e", "emissive": "#ff006e", "emissivePulse": 0.5},
+                    "modifiers": [{"type": "wave", "axis": "y", "strength": 0.18, "frequency": 5.0, "speed": 3.0}],
+                    "motion": {"spinX": -0.3, "spinY": 0.2},
+                },
+                {
+                    "id": "ik_target_orb",
+                    "geometry": "metaball",
+                    "position": [4.5, 3.2, 1.5],
+                    "scale": [0.55, 0.55, 0.55],
+                    "material": {"preset": "lava", "color": "#ffbe0b", "emissive": "#fb5607", "emissivePulse": 0.9},
+                    "softBody": {"stiffness": 0.45, "damping": 0.12, "squash": 0.35},
+                    "pathFollow": {
+                        "points": [
+                            [4.8, 3.2, 0],
+                            [2.4, 5.0, 4.2],
+                            [-3.8, 2.6, 3.5],
+                            [-4.5, 4.4, -2.5],
+                            [1.5, 1.6, -4.6],
+                            [4.8, 3.2, 0],
+                        ],
+                        "closed": True,
+                        "orientToPath": True,
+                        "speed": 0.42,
+                    },
+                },
+                {"id": "arm_shoulder", "geometry": "ikJoint", "position": [-4.5, 0.4, 0], "scale": [0.5, 1.8, 0.5], "material": {"preset": "obsidian", "color": "#2b2d42"}},
+                {"id": "arm_elbow", "geometry": "ikJoint", "position": [-2.2, 2.2, 0], "scale": [0.42, 1.7, 0.42], "material": {"preset": "copper", "color": "#ff9f1c"}},
+                {"id": "arm_wrist", "geometry": "octahedron", "position": [0.2, 3.5, 0], "scale": [0.45, 0.45, 0.45], "material": {"preset": "emerald", "color": "#06d6a0", "emissive": "#06d6a0", "emissivePulse": 0.6}},
+                {
+                    "id": "sentinel_gear_east",
+                    "geometry": "gear",
+                    "position": [5.5, 2.2, -2.0],
+                    "scale": [1.1, 1.1, 1.1],
+                    "material": {"preset": "gold", "color": "#ffd166"},
+                    "constraints": [{"type": "trackTo", "targetId": "singularity_core", "influence": 1.0}],
+                    "motion": {"spinZ": 1.2},
+                },
+                {
+                    "id": "sentinel_prism_west",
+                    "geometry": "icosahedron",
+                    "position": [-5.5, 4.0, -2.5],
+                    "scale": [0.85, 0.85, 0.85],
+                    "material": {"preset": "glass", "color": "#90e0ef", "iridescence": 1.0},
+                    "constraints": [
+                        {"type": "copyRotation", "targetId": "singularity_core", "influence": 0.85},
+                        {"type": "limitDistance", "targetId": "singularity_core", "influence": 0.9},
+                    ],
+                },
+                {
+                    "id": "quantum_terrain",
+                    "geometry": "terrain",
+                    "position": [0, -1.8, 0],
+                    "scale": [18, 1.2, 18],
+                    "material": {"preset": "carbon", "color": "#14213d", "flatShading": True},
+                    "modifiers": [{"type": "wave", "axis": "y", "strength": 0.45, "frequency": 1.8, "speed": 0.8}],
+                },
+                {
+                    "id": "nebula_particles",
+                    "geometry": "particles3d",
+                    "position": [0, 2.2, 0],
+                    "scale": [9, 6, 9],
+                    "material": {"preset": "pearl", "color": "#caf0f8"},
+                    "physics": {"drag": 0.04, "restitution": 0.7},
+                },
+            ],
+            "ikChains": [
+                {"nodes": ["arm_shoulder", "arm_elbow", "arm_wrist"], "targetId": "ik_target_orb", "pole": [0, 4.5, 2.0], "iterations": 10, "aimNodes": True}
+            ],
+            "forceFields": [
+                {"id": "singularity_attractor", "type": "attractor", "position": [0, 2.2, 0], "strength": 2.4, "radius": 10.0}
+            ],
+            "triggers": [
+                {"id": "core_proximity_pulse", "position": [0, 2.2, 0], "radius": 3.5, "targetId": "ik_target_orb", "action": "pulse"}
+            ],
+            "storyboard": {
+                "shots": [
+                    {"name": "Establishing Orbit", "position": [0, 6.5, 16], "target": [0, 2.2, 0], "duration": 4.0},
+                    {"name": "IK Manipulator Close-Up", "position": [-2.5, 3.8, 7.5], "target": [-1.0, 2.6, 0.5], "duration": 3.5},
+                    {"name": "Singularity Core", "position": [3.5, 2.5, 5.2], "target": [0, 2.2, 0], "duration": 3.5},
+                ]
+            },
+        }
+        block = "```evo\n" + json.dumps(chrono_obj, indent=2) + "\n```"
+        return block if pure_code else f"Synthesized the **Chrono-Singularity Manifold** (non-Euclidean `klein` + `mobius` + `torusKnot`, 10-iteration FABRIK IK, Blender constraints, attractor & proximity trigger) via Neo 4 (`thinking={thinking_mode}`):\n\n{block}", "Synthesized Chrono-Singularity Manifold EVO scene."
+
     # 1. Creative Engine synthesis (EVO 3D, Three.js Studio, Stop Motion v3, Hybrid, Pixel Art v3)
     if any(k in low for k in ("hybrid", "liquidmotion", "combo")):
         hybrid_obj = {
@@ -1862,58 +2008,183 @@ def synthesize_creative_or_code(user_text: str, low: str, thinking_mode: str, pu
         block = "```threejs\n" + json.dumps(three_obj, indent=2) + "\n```"
         return block if pure_code else f"Synthesized a **Three.js 3D Studio** scene via Neo 4 (`thinking={thinking_mode}`):\n\n{block}", "Synthesized Three.js Studio scene with helix, gear, dodecahedron, starfield, and PBR shaders."
 
-    if any(k in low for k in ("evo", "3d", "cube", "sphere", "collision", "hitbox")) and any(k in low for k in ("evo", "3d", "scene", "render", "animat", "physics", "hitbox")):
-        evo_obj = {
+    if any(k in low for k in ("ik", "inverse kinematic", "robot arm", "robotic arm", "tentacle", "rigging", "modifier", "softbody", "soft-body", "forcefield", "force field", "vortex", "morph target", "pathfollow")):
+        if "three" in low:
+            three_ik_obj = {
+                "title": "Neo 4 Three.js FABRIK IK Robotic Arm",
+                "lighting": "cyberpunk",
+                "background": "#070b18",
+                "starfield": True,
+                "objects": [
+                    {"id": "ik_shoulder", "shape": "capsule", "position": [0, 0, 0], "scale": [0.42, 1.35, 0.42], "material": "chrome", "color": "#38bdf8"},
+                    {"id": "ik_elbow", "shape": "capsule", "position": [0, 1.35, 0], "scale": [0.36, 1.25, 0.36], "material": "gold", "color": "#fbbf24"},
+                    {"id": "ik_wrist", "shape": "octahedron", "position": [0, 2.6, 0], "scale": [0.42, 0.42, 0.42], "material": "neon", "color": "#f472b6"},
+                    {"id": "ik_target", "shape": "sphere", "position": [1.8, 1.6, 0.8], "scale": [0.35, 0.35, 0.35], "material": "hologram", "color": "#22d3ee", "animation": "orbit"},
+                ],
+                "ikChains": [
+                    {"nodes": ["ik_shoulder", "ik_elbow", "ik_wrist"], "target": "ik_target", "pole": [0, 2.2, 2.0], "iterations": 6, "aimBones": True}
+                ],
+                "audio": {"mode": "preset", "preset": "sci_fi_arp", "durationSec": 6},
+            }
+            block = "```threejs\n" + json.dumps(three_ik_obj, indent=2) + "\n```"
+            return block if pure_code else f"Synthesized a **Three.js FABRIK Inverse Kinematics** scene via Neo 4 (`thinking={thinking_mode}`):\n\n{block}", "Synthesized Three.js Studio scene with FABRIK IK robotic arm and orbiting target."
+
+        evo_ik_obj = {
             "format": "evo/v1",
-            "title": "Neo 4 Rigid-Body Hitbox Arena",
+            "title": "Neo 4 Blender-Grade IK Rig & Deformer Stage",
             "fps": 30,
             "durationSec": 6,
             "loop": True,
-            "background": "#080d1a",
+            "background": "#070b16",
             "environment": "cyberpunk",
             "starfield": True,
-            "fog": {"color": "#080d1a", "near": 8, "far": 28},
-            "exposure": 1.15,
+            "fog": {"color": "#070b16", "density": 0.03},
+            "exposure": 1.2,
             "gridFloor": True,
             "contactShadows": True,
             "nodes": [
                 {
-                    "id": "orb_a",
+                    "id": "shoulder_joint",
+                    "type": "ikJoint",
+                    "position": [0, 0, 0],
+                    "scale": [0.48, 1.3, 0.48],
+                    "material": {"preset": "chrome", "metalness": 0.85, "roughness": 0.16},
+                },
+                {
+                    "id": "elbow_joint",
+                    "type": "ikJoint",
+                    "position": [0, 1.3, 0],
+                    "scale": [0.42, 1.2, 0.42],
+                    "material": {"preset": "gold", "metalness": 0.82, "roughness": 0.2},
+                },
+                {
+                    "id": "wrist_effector",
+                    "type": "octahedron",
+                    "position": [0, 2.5, 0],
+                    "scale": [0.38, 0.38, 0.38],
+                    "material": {"preset": "neon", "gradient": {"colors": ["#38bdf8", "#f472b6"], "axis": "y"}},
+                    "constraints": [{"type": "trackTo", "target": "ik_target_orb", "influence": 1.0}],
+                },
+                {
+                    "id": "ik_target_orb",
                     "type": "sphere",
-                    "radius": 0.55,
-                    "position": [-1.8, 1.4, 0],
-                    "material": {"preset": "neon", "gradient": {"colors": ["#38bdf8", "#818cf8", "#f472b6"], "axis": "y"}, "metalness": 0.55, "roughness": 0.16},
-                    "physics": {"velocity": [2.2, 0.4, 0.3], "gravity": -9.8, "restitution": 0.88, "floorY": -1.35, "drag": 0.02, "collidable": True},
-                    "hitbox": {"shape": "sphere", "radius": 0.55, "show": True, "color": "#22d3ee"},
+                    "radius": 0.32,
+                    "position": [1.8, 1.5, 0.4],
+                    "material": {"preset": "hologram", "emissivePulse": True},
+                    "motion": {"orbit": {"cx": 0.2, "cy": 1.6, "cz": 0, "rx": 1.9, "ry": 0.65, "rz": 1.4, "turns": 1}},
                 },
                 {
-                    "id": "crate_b",
-                    "type": "box",
-                    "size": [1.0, 1.0, 1.0],
-                    "position": [1.6, 1.8, 0],
-                    "material": {"preset": "gold", "gradient": {"colors": ["#f59e0b", "#ef4444"], "axis": "x"}, "metalness": 0.65, "roughness": 0.22},
-                    "physics": {"velocity": [-1.9, 0.8, -0.2], "gravity": -9.8, "restitution": 0.84, "floorY": -1.35, "drag": 0.02, "collidable": True},
-                    "hitbox": {"shape": "box", "size": [1.0, 1.0, 1.0], "show": True, "color": "#fbbf24"},
+                    "id": "deformed_ribbon",
+                    "type": "metaball",
+                    "position": [-2.2, 0.9, -0.6],
+                    "material": {"preset": "iridescent" if False else "pearl"},
+                    "modifiers": [
+                        {"type": "twist", "strength": "1.2 * sin(t * TAU)", "axis": "y"},
+                        {"type": "wave", "strength": 0.18, "frequency": 2.6, "speed": 1.4, "axis": "x"},
+                    ],
                 },
                 {
-                    "id": "arena_ring",
-                    "type": "gear",
-                    "scale": [1.4, 0.3, 1.4],
-                    "position": [0, -1.25, 0],
-                    "material": {"preset": "chrome"},
-                    "motion": {"spinY": 0.8},
+                    "id": "stage_terrain",
+                    "type": "terrain",
+                    "position": [0, -1.35, 0],
+                    "scale": [6.5, 0.45, 6.5],
+                    "material": {"preset": "obsidian", "roughness": 0.35},
+                    "forceField": {"type": "vortex", "strength": 2.4, "radius": 4.5},
                 },
+            ],
+            "ikChains": [
+                {
+                    "nodes": ["shoulder_joint", "elbow_joint", "wrist_effector"],
+                    "target": "ik_target_orb",
+                    "pole": [0, 2.0, 2.4],
+                    "iterations": 6,
+                    "aimBones": True,
+                }
             ],
             "storyboard": {
                 "shots": [
-                    {"label": "Arena Wide", "start": 0, "end": 0.55, "cameraCut": "wide"},
-                    {"label": "Impact Orbit", "start": 0.55, "end": 1, "cameraCut": "orbit"},
+                    {"label": "IK Arm Wide", "start": 0, "end": 0.5, "cameraCut": "wide"},
+                    {"label": "Target Orbit", "start": 0.5, "end": 1, "cameraCut": "orbit"},
+                ]
+            },
+            "audio": {"mode": "preset", "preset": "cyberpunk_arp", "durationSec": 6},
+        }
+        block = "```evo\n" + json.dumps(evo_ik_obj, indent=2) + "\n```"
+        return block if pure_code else f"Synthesized an **EVO 3D FABRIK IK & Blender-Modifier Stage** via Neo 4 (`thinking={thinking_mode}`):\n\n{block}", "Synthesized EVO 3D scene with FABRIK IK chain, trackTo constraint, metaball twist/wave modifiers, and terrain."
+
+    if any(k in low for k in ("evo", "3d", "cube", "sphere", "collision", "hitbox", "shape", "sculpture", "geomet", "mesh", "gear", "helix", "torus", "icosahedron", "lathe", "metaball")) and any(k in low for k in ("evo", "3d", "scene", "render", "animat", "physics", "hitbox", "shape", "sculpture", "mesh", "make", "generate", "create", "build")):
+        evo_obj = {
+            "format": "evo/v1",
+            "title": "Neo 4 Non-Cube Sculpted PBR & Hitbox Stage",
+            "fps": 30,
+            "durationSec": 6,
+            "loop": True,
+            "background": "#080d1a",
+            "environment": "cosmic",
+            "starfield": {"count": 240, "radius": 55, "color": "#a5d8ff"},
+            "fog": {"color": "#080d1a", "density": 0.025},
+            "camera": {"fov": 50, "position": [0, 3.2, 9.5], "target": [0, 0.8, 0], "exposure": 1.18},
+            "gridFloor": True,
+            "contactShadows": True,
+            "nodes": [
+                {
+                    "id": "sculpted_knot",
+                    "geometry": "torusKnot",
+                    "position": [0, 1.35, 0],
+                    "scale": [0.95, 0.95, 0.95],
+                    "material": {"preset": "hologram", "color": "#38bdf8", "emissive": "#00bbf9", "emissivePulse": 0.6, "sheen": 0.9},
+                    "modifiers": [{"type": "wave", "axis": "y", "strength": 0.16, "frequency": 3.5, "speed": 2.0}],
+                    "motion": {"spinY": 0.65, "spinX": 0.25},
+                },
+                {
+                    "id": "bouncing_metaball",
+                    "geometry": "metaball",
+                    "position": [-2.1, 1.8, 0.3],
+                    "scale": [0.65, 0.65, 0.65],
+                    "material": {"preset": "neon", "gradient": {"colors": ["#38bdf8", "#818cf8", "#f472b6"], "axis": "y"}, "metalness": 0.55, "roughness": 0.16},
+                    "softBody": {"stiffness": 0.5, "damping": 0.15, "squash": 0.32},
+                    "physics": {"velocity": [1.8, 0.4, 0.2], "gravity": -9.8, "restitution": 0.88, "floorY": -1.35, "drag": 0.02, "collidable": True},
+                    "hitbox": {"shape": "sphere", "radius": 0.6, "show": True, "color": "#22d3ee"},
+                },
+                {
+                    "id": "faceted_crystal",
+                    "geometry": "icosahedron",
+                    "position": [2.2, 1.7, -0.2],
+                    "scale": [0.78, 0.78, 0.78],
+                    "material": {"preset": "emerald", "color": "#06d6a0", "emissive": "#06d6a0", "emissivePulse": 0.45, "iridescence": 0.8},
+                    "physics": {"velocity": [-1.7, 0.7, -0.15], "gravity": -9.8, "restitution": 0.84, "floorY": -1.35, "drag": 0.02, "collidable": True},
+                    "hitbox": {"shape": "sphere", "radius": 0.75, "show": True, "color": "#34d399"},
+                },
+                {
+                    "id": "sentinel_gear",
+                    "geometry": "gear",
+                    "scale": [1.6, 0.35, 1.6],
+                    "position": [0, -1.25, 0],
+                    "material": {"preset": "gold", "color": "#ffd166"},
+                    "motion": {"spinY": 0.85},
+                },
+                {
+                    "id": "stage_terrain",
+                    "geometry": "terrain",
+                    "scale": [12, 0.7, 12],
+                    "position": [0, -1.55, 0],
+                    "material": {"preset": "chrome", "color": "#1e293b", "flatShading": True},
+                    "modifiers": [{"type": "wave", "axis": "y", "strength": 0.25, "frequency": 1.6, "speed": 0.7}],
+                },
+            ],
+            "forceFields": [
+                {"id": "center_vortex", "type": "attractor", "position": [0, 1.2, 0], "strength": 1.4, "radius": 6.0}
+            ],
+            "storyboard": {
+                "shots": [
+                    {"name": "Arena Wide", "position": [0, 3.5, 9.5], "target": [0, 0.8, 0], "duration": 3.0},
+                    {"name": "Sculpted Orbit", "position": [4.2, 2.2, 5.5], "target": [0, 1.1, 0], "duration": 3.0},
                 ]
             },
             "audio": {"mode": "preset", "preset": "sci_fi_arp", "durationSec": 6},
         }
         block = "```evo\n" + json.dumps(evo_obj, indent=2) + "\n```"
-        return block if pure_code else f"Synthesized an **EVO 3D Physics & Hitbox Scene** via Neo 4 (`thinking={thinking_mode}`):\n\n{block}", "Synthesized live EVO 3D scene with PBR presets, starfield, rigid-body gravity, and collision hitboxes."
+        return block if pure_code else f"Synthesized a multi-shape **EVO 3D PBR & Hitbox Stage** (`torusKnot`, `metaball`, `icosahedron`, `gear`, `terrain`) via Neo 4 (`thinking={thinking_mode}`):\n\n{block}", "Synthesized live sculpted EVO 3D scene with non-cube shapes, PBR presets, starfield, soft-body physics, and collision hitboxes."
 
     if any(k in low for k in ("stopmotion", "stop-motion", "stop motion", "svg", "vector", "cartoon", "slime")):
         sm_obj = {
@@ -2193,6 +2464,7 @@ def _try_remote_llm(
     sys_parts = [
         "You are Neo 4 inside Folio v4.2, a sharp, natural, conversational AI engineer.",
         "Respond clearly and directly in cohesive prose (never sound like dry search snippets).",
+        "Know Folio capabilities accurately: EVO 3D supports 33 geometries (klein, mobius, torusKnot, helix, lathe, metaball, icosahedron, octahedron, gear, terrain, customMesh, ikJoint; supports `geometry`/`shape` aliases — never emit cube-only placeholders), FABRIK ikChains, vertex modifiers (bend/twist/taper/wave/noise/squash/mirror with `speed`), morphTargets, constraints, pathFollow, actionStrips, softBody, top-level & per-node forceFields and triggers, object starfields `{count, radius, color}`, and camera.exposure; Engine Datasets live in `src/data/engineDatasets.ts` and `npm run folio -- kb train-datasets`; Google Cloud deployment uses `gcloud run deploy folio --source . --region us-central1 --allow-unauthenticated --memory 8Gi --cpu 4 --port 3000 --set-env-vars GEMINI_API_KEY=...` or a Compute Engine VM with a 16 GB swapfile.",
     ]
     if system_instruction:
         sys_parts.append(system_instruction[:600])
@@ -2274,6 +2546,7 @@ def _try_tiny_local_llm(
     sys_parts = [
         "You are Neo 4, a smart, friendly, conversational assistant inside Folio v4.2.",
         "Reply directly in natural, cohesive prose like a helpful teammate—never dump raw search-result bullets or invent APIs outside the context.",
+        "EVO 3D includes 33 sculpted geometries (klein, mobius, torusKnot, metaball, gear, helix, terrain, ikJoint — never default to plain cubes), FABRIK ikChains, modifiers, constraints, pathFollow, softBody, top-level forceFields/triggers, Engine Datasets (`kb train-datasets`), and Google Cloud migration via `gcloud run deploy folio --source . --memory 8Gi --cpu 4 --port 3000` or Compute Engine VM with a 16 GB swapfile.",
     ]
     if system_instruction:
         sys_parts.append(system_instruction[:400])
@@ -2813,23 +3086,24 @@ def generate_neo4_response(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "      \"hitbox\": {\"shape\": \"sphere\", \"radius\": 0.65, \"show\": true, \"color\": \"#38bdf8\"}\n"
                     "    },\n"
                     "    {\n"
-                    "      \"id\": \"core_cube\",\n"
-                    "      \"type\": \"box\",\n"
-                    "      \"size\": [1.0, 1.0, 1.0],\n"
+                    "      \"id\": \"core_crystal\",\n"
+                    "      \"geometry\": \"icosahedron\",\n"
+                    "      \"scale\": [0.85, 0.85, 0.85],\n"
                     "      \"position\": [1.2, 1.4, 0],\n"
                     "      \"material\": {\n"
-                    "        \"color\": \"#f59e0b\",\n"
+                    "        \"preset\": \"emerald\",\n"
+                    "        \"color\": \"#06d6a0\",\n"
                     "        \"metalness\": 0.4,\n"
-                    "        \"roughness\": 0.25,\n"
-                    "        \"gradient\": {\"colors\": [\"#fbbf24\", \"#ef4444\"], \"axis\": \"x\"}\n"
+                    "        \"roughness\": 0.22,\n"
+                    "        \"gradient\": {\"colors\": [\"#34d399\", \"#0ea5e9\"], \"axis\": \"x\"}\n"
                     "      },\n"
                     "      \"physics\": {\"velocity\": [-1.2, 0.8, 0], \"gravity\": -9.8, \"restitution\": 0.84, \"floorY\": -1.2, \"collidable\": true},\n"
-                    "      \"hitbox\": {\"shape\": \"box\", \"size\": [1.0, 1.0, 1.0], \"show\": true, \"color\": \"#fbbf24\"}\n"
+                    "      \"hitbox\": {\"shape\": \"sphere\", \"radius\": 0.8, \"show\": true, \"color\": \"#34d399\"}\n"
                     "    },\n"
                     "    {\n"
                     "      \"id\": \"ground_plane\",\n"
-                    "      \"type\": \"plane\",\n"
-                    "      \"size\": [10.0, 10.0],\n"
+                    "      \"geometry\": \"terrain\",\n"
+                    "      \"scale\": [10.0, 0.6, 10.0],\n"
                     "      \"position\": [0, -1.2, 0],\n"
                     "      \"material\": {\"color\": \"#1e293b\", \"metalness\": 0.1, \"roughness\": 0.85}\n"
                     "    }\n"
@@ -2848,8 +3122,8 @@ def generate_neo4_response(payload: Dict[str, Any]) -> Dict[str, Any]:
                         "format": "evo/v1",
                         "title": "Neo 4 Verified 3D Arena",
                         "nodes": [
-                            {"id": "hero_sphere", "type": "sphere", "radius": 0.65, "position": [-1.2, 1.2, 0]},
-                            {"id": "core_cube", "type": "box", "size": [1.0, 1.0, 1.0], "position": [1.2, 1.4, 0]}
+                            {"id": "hero_sphere", "geometry": "sphere", "radius": 0.65, "position": [-1.2, 1.2, 0]},
+                            {"id": "core_crystal", "geometry": "icosahedron", "scale": [0.85, 0.85, 0.85], "position": [1.2, 1.4, 0]}
                         ]
                     }, indent=2) + "\n```"
                     if pure_code
@@ -2864,8 +3138,11 @@ def generate_neo4_response(payload: Dict[str, Any]) -> Dict[str, Any]:
                 )
         elif (
             brain.folio_docs_kb is not None
-            and re.search(r"\b(folio|sdk|cli|changelog|release|version|backup|watchdog|ram|memory|blender|docs|documentation)\b", low)
-            and not re.search(r"\b(render|animate|draw|create|build|make)\s+(a|an|me)?\s*(3d|evo|stopmotion|pixel|liquidmotion|threejs)\b", low)
+            and re.search(r"\b(folio|sdk|cli|changelog|release|version|backup|watchdog|ram|memory|swap|wipe|restart|migrate|move|cloud run|vps|docker|blender|ik|kinematics|modifier|morph|constraint|softbody|forcefield|trigger|docs|documentation|dataset|datasets)\b", low)
+            and not (
+                re.search(r"\b(render|animate|draw|create|build|make|write|generate|synthesize|spawn|show)\b", low)
+                and re.search(r"\b(3d|evo|chrono|singularity|manifold|klein|mobius|torusknot|metaball|stopmotion|stop-motion|pixel|liquidmotion|three\.?js|ik|robot|scene|shape|sculpture)\b", low)
+            )
         ):
             doc_hits = brain.search_folio_docs(user_text, limit=3)
             if doc_hits:
@@ -2919,7 +3196,10 @@ def generate_neo4_response(payload: Dict[str, Any]) -> Dict[str, Any]:
                     cot_lines.append(f"• Conversational synthesis via {used_model}")
                 else:
                     body_text = "\n".join(f"- {r}" for r in retrieved)
-        elif re.search(r"\b(evo|stopmotion|stop-motion|liquidmotion|hybrid|pixel|sprite|hitbox|collision|godot|cmake|kotlin|mod|svg)\b", low) or (
+        elif re.search(r"\b(chrono|singularity|manifold|klein|mobius|torusknot|metaball|evo|stopmotion|stop-motion|liquidmotion|hybrid|pixel|sprite|hitbox|collision|godot|cmake|kotlin|mod|svg)\b", low) or (
+            re.search(r"\b(render|animate|draw|create|build|make|write|generate|synthesize|spawn)\b", low)
+            and re.search(r"\b(3d|three\.?js|ik|robot|scene|shape|sculpture)\b", low)
+        ) or (
             neo_mode == "rule" and re.search(r"\b(write|code|function|script|python|typescript|three\.?js|algorithm|sort|search|markov)\b", low)
         ):
             has_grounding = True
@@ -3070,13 +3350,20 @@ def run_selftest() -> int:
     consts = try_solve_math_or_physics("compute pi and euler e to 50 digits")
     assert consts and consts["answer"].count("3.1415926535") == 1, consts
 
-    # 5. Creative EVO synthesis + Linguistic Research + Entropic Auditor
+    # 5. Creative EVO synthesis + Chrono-Singularity Manifold + Linguistic Research + Entropic Auditor
     evo_res = generate_neo4_response({
         "dataDir": tmp_dir,
         "thinkingMode": "deep",
         "messages": [{"role": "user", "text": "write an evo 3d hitbox collision scene"}],
     })
-    assert evo_res["ok"] and "```evo" in evo_res["text"] and "hitbox" in evo_res["text"], evo_res
+    assert evo_res["ok"] and "```evo" in evo_res["text"] and "hitbox" in evo_res["text"] and "torusKnot" in evo_res["text"], evo_res
+
+    chrono_res = generate_neo4_response({
+        "dataDir": tmp_dir,
+        "thinkingMode": "deep",
+        "messages": [{"role": "user", "text": "build the Chrono-Singularity Manifold with klein bottle, mobius halo, FABRIK IK, and triggers"}],
+    })
+    assert chrono_res["ok"] and "```evo" in chrono_res["text"] and "klein" in chrono_res["text"] and "forceFields" in chrono_res["text"], chrono_res
 
     research_res = generate_neo4_response({
         "dataDir": tmp_dir,
@@ -3095,8 +3382,8 @@ def run_selftest() -> int:
     })
     assert res["ok"] and res.get("audit") and res["audit"]["shannonEntropyBits"] > 2.0, res
 
-    # 6. Trained SQLite FTS5 WordNet & Lesk context check (if knowledge.db exists)
-    if brain.kb is not None:
+    # 6. Trained SQLite FTS5 WordNet & Lesk context check (if WordNet synsets are built)
+    if brain.kb is not None and brain.kb_meta.get("synsets", 0) > 0:
         comp_mouse = brain.disambiguate_context("Click the computer mouse pointer cursor on the screen", radius=5)
         rodent_mouse = brain.disambiguate_context("The small furry mouse had a pointed snout and slender tail", radius=6)
         assert any(x["token"] == "mouse" and "device" in x["selectedSense"].lower() for x in comp_mouse), comp_mouse

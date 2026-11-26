@@ -417,6 +417,207 @@ def ingest_custom_dataset(conn: sqlite3.Connection, file_path: str) -> int:
     return len(sentences)
 
 
+def ensure_knowledge_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = NORMAL;
+        PRAGMA temp_store = FILE;
+        PRAGMA cache_size = -16384;
+        PRAGMA mmap_size = 67108864;
+
+        CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS synsets (
+            offset_pos TEXT PRIMARY KEY,
+            pos TEXT NOT NULL,
+            lemmas TEXT NOT NULL,
+            definition TEXT NOT NULL,
+            examples TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS lemma_senses (
+            lemma TEXT NOT NULL,
+            offset_pos TEXT NOT NULL,
+            pos TEXT NOT NULL,
+            sense_rank INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_lemma_senses_lemma ON lemma_senses(lemma, sense_rank);
+        CREATE VIRTUAL TABLE IF NOT EXISTS synsets_fts USING fts5(
+            offset_pos UNINDEXED,
+            lemmas,
+            definition,
+            examples
+        );
+        CREATE TABLE IF NOT EXISTS corpus_facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            category TEXT NOT NULL,
+            sentence TEXT NOT NULL
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS corpus_fts USING fts5(
+            topic,
+            category,
+            sentence
+        );
+        CREATE TABLE IF NOT EXISTS pos_lexicon (
+            word TEXT PRIMARY KEY,
+            pos TEXT NOT NULL,
+            freq INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS markov_trigrams (
+            w1 TEXT NOT NULL,
+            w2 TEXT NOT NULL,
+            next_word TEXT NOT NULL,
+            freq INTEGER NOT NULL,
+            PRIMARY KEY (w1, w2, next_word)
+        );
+        CREATE TABLE IF NOT EXISTS markov_bigrams (
+            w1 TEXT NOT NULL,
+            next_word TEXT NOT NULL,
+            freq INTEGER NOT NULL,
+            PRIMARY KEY (w1, next_word)
+        );
+        """
+    )
+
+
+def _train_markov_sentences(conn: sqlite3.Connection, sentences: List[str]) -> int:
+    tri_added = 0
+    for sent in sentences:
+        toks = re.findall(r"[A-Za-z0-9'-]+|[.,!?;:]", sent)
+        if len(toks) < 3:
+            continue
+        padded = ["<BOS>", "<BOS>"] + toks + ["<EOS>"]
+        for i in range(2, len(padded)):
+            conn.execute(
+                "INSERT INTO markov_trigrams(w1, w2, next_word, freq) VALUES (?, ?, ?, 1) "
+                "ON CONFLICT(w1, w2, next_word) DO UPDATE SET freq = freq + 1",
+                (padded[i - 2], padded[i - 1], padded[i]),
+            )
+            conn.execute(
+                "INSERT INTO markov_bigrams(w1, next_word, freq) VALUES (?, ?, 1) "
+                "ON CONFLICT(w1, next_word) DO UPDATE SET freq = freq + 1",
+                (padded[i - 1], padded[i]),
+            )
+            tri_added += 1
+    return tri_added
+
+
+def ingest_engine_datasets(
+    payload: Optional[Dict[str, Any]] = None,
+    db_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    out_db = db_path or DEFAULT_DB_PATH
+    os.makedirs(os.path.dirname(out_db), exist_ok=True)
+    conn = sqlite3.connect(out_db)
+    ensure_knowledge_schema(conn)
+
+    datasets = []
+    if payload and isinstance(payload, dict) and isinstance(payload.get("datasets"), list):
+        datasets = payload["datasets"]
+    else:
+        datasets = [
+            {
+                "id": "evo3d",
+                "engineName": "EVO 3D Engine",
+                "format": "evo/v1",
+                "summary": "Blender-grade WebGL PBR engine with 33 geometries, modifiers, morphTargets, constraints, FABRIK IK, forceFields, triggers, and starfield objects.",
+                "designRule": "Never use bare boxes as default placeholder scenes; compose klein, mobius, torusKnot, metaball, gear, helix, lathe, icosahedron, terrain, and ikJoint.",
+                "parameters": [],
+                "examples": [],
+            },
+            {
+                "id": "threejs",
+                "engineName": "Three.js Studio",
+                "format": "threejs/v1",
+                "summary": "Interactive 3D studio supporting 27+ sculpted shapes (klein, metaball, ikJoint, gear, helix, torusKnot, icosahedron), PBR materials, and FABRIK IK.",
+                "designRule": "Default unknown or custom 3D nodes to sculpted polyhedra (icosahedron/torusKnot/helix) instead of plain cubes.",
+                "parameters": [],
+                "examples": [],
+            },
+            {
+                "id": "ik-math",
+                "engineName": "Unified IK & Physics Math",
+                "format": "math/ik",
+                "summary": "130+ math/IK helpers including FABRIK multi-joint chains, 2D/3D analytical IK, lookat_yaw/pitch, forceFields, softBody squash, and proximity triggers.",
+                "designRule": "Pair 8-12 FABRIK iterations with pole vectors and softBody damping for fluid robotic/organic articulation.",
+                "parameters": [],
+                "examples": [],
+            },
+        ]
+
+    # Idempotent refresh of engine dataset facts
+    conn.execute("DELETE FROM corpus_facts WHERE category LIKE 'engine-dataset:%'")
+    conn.execute("DELETE FROM corpus_fts WHERE category LIKE 'engine-dataset:%'")
+
+    fact_rows: List[Tuple[str, str, str]] = []
+    sentences: List[str] = []
+    param_count = 0
+    example_count = 0
+
+    for ds in datasets:
+        ds_id = str(ds.get("id") or "engine").strip()
+        engine_name = str(ds.get("engineName") or ds_id)
+        fmt = str(ds.get("format") or "")
+        summary = str(ds.get("summary") or "").strip()
+        rule = str(ds.get("designRule") or "").strip()
+        cat = f"engine-dataset:{ds_id}"
+
+        if summary:
+            sent = f"{engine_name} ({fmt}): {summary} Design rule: {rule}" if rule else f"{engine_name} ({fmt}): {summary}"
+            fact_rows.append((engine_name, cat, sent[:1200]))
+            sentences.append(sent)
+
+        for p in ds.get("parameters") or []:
+            param_count += 1
+            p_name = str(p.get("param") or "")
+            p_rec = str(p.get("recommendedValues") or "")
+            p_rng = str(p.get("rangeOrOptions") or "")
+            p_notes = str(p.get("notes") or "")
+            p_sent = f"{engine_name} parameter `{p_name}` uses recommended values {p_rec} (options: {p_rng}). {p_notes}".strip()
+            fact_rows.append((f"{engine_name} · {p_name}", cat, p_sent[:1200]))
+            sentences.append(p_sent)
+
+        for ex in ds.get("examples") or []:
+            example_count += 1
+            title = str(ex.get("title") or "Example")
+            prompt = str(ex.get("prompt") or "")
+            desc = str(ex.get("description") or "")
+            kv = ex.get("keyValues") or {}
+            kv_text = ", ".join(f"{k}={v}" for k, v in kv.items())
+            ex_sent = f"{engine_name} dataset example '{title}' for prompt '{prompt}': {desc} Key calibrated values: {kv_text}.".strip()
+            fact_rows.append((title, cat, ex_sent[:1200]))
+            sentences.append(ex_sent)
+
+    if fact_rows:
+        conn.executemany("INSERT INTO corpus_facts(topic, category, sentence) VALUES (?, ?, ?)", fact_rows)
+        conn.executemany("INSERT INTO corpus_fts(topic, category, sentence) VALUES (?, ?, ?)", fact_rows)
+
+    tri_added = _train_markov_sentences(conn, sentences)
+    conn.executemany(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+        [
+            ("engineDatasets", str(len(datasets))),
+            ("engineDatasetParams", str(param_count)),
+            ("engineDatasetExamples", str(example_count)),
+            ("engineDatasetTrainedAt", str(int(time.time()))),
+        ],
+    )
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    db_size = os.path.getsize(out_db)
+    return {
+        "ok": True,
+        "dbPath": out_db,
+        "datasets": len(datasets),
+        "parameters": param_count,
+        "examples": example_count,
+        "factsInserted": len(fact_rows),
+        "trigramsTrained": tri_added,
+        "sizeBytes": db_size,
+    }
+
+
 def build_knowledge_db(raw_dir: str = DEFAULT_RAW_DIR, db_path: str = DEFAULT_DB_PATH) -> Dict[str, int]:
     t0 = time.time()
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -520,6 +721,31 @@ def ingest_folio_docs(
             hl_lines = [f"- [{h.get('category', 'Update')}] **{h.get('title', '')}**: {h.get('detail', '')}" for h in (c.get("highlights") or [])]
             content = f"Release: {ver} ({codename} · {date})\nSummary: {summary}\n\nHighlights:\n" + "\n".join(hl_lines)
             sections.append((f"changelog:{ver.lower().replace('.', '-')}", "Changelog", f"{ver} — {codename}", summary, content, "", "src/data/changelogs.ts"))
+
+        raw_datasets = payload.get("datasets") or []
+        for ds in raw_datasets:
+            ds_id = str(ds.get("id") or "")
+            eng_name = str(ds.get("engineName") or ds_id)
+            fmt = str(ds.get("format") or "")
+            summary = str(ds.get("summary") or "")
+            design_rule = str(ds.get("designRule") or "")
+            param_lines = [
+                f"- `{p.get('param', '')}` ({p.get('type', '')}): recommended={p.get('recommendedValues', '')} · range={p.get('rangeOrOptions', '')} — {p.get('notes', '')}"
+                for p in (ds.get("parameters") or [])
+            ]
+            ex_lines = [
+                f"- **{ex.get('title', '')}** (prompt: \"{ex.get('prompt', '')}\"): {ex.get('description', '')}"
+                for ex in (ds.get("examples") or [])
+            ]
+            content = (
+                f"Engine: {eng_name} ({fmt})\nDesign Rule: {design_rule}\n\n"
+                f"Calibrated Parameters:\n" + "\n".join(param_lines) + "\n\nCurated Examples:\n" + "\n".join(ex_lines)
+            )
+            first_ex = (ds.get("examples") or [None])[0]
+            code_ex = ""
+            if first_ex and first_ex.get("code"):
+                code_ex = f"```{first_ex.get('language', 'json')}\n{first_ex.get('code', '')}\n```"
+            sections.append((f"dataset:{ds_id}", "Datasets", f"{eng_name} Dataset ({fmt})", summary, content, code_ex, "src/data/engineDatasets.ts"))
 
     # 2. Markdown master docs: docs/FOLIO_DOCS.md
     docs_md_path = os.path.join(root, "docs", "FOLIO_DOCS.md")
@@ -724,6 +950,19 @@ def main() -> int:
             except Exception:
                 pass
         res = ingest_folio_docs(payload=payload_data)
+        print(json.dumps(res))
+        return 0
+
+    if "--ingest-engine-datasets" in args:
+        payload_data = None
+        if not sys.stdin.isatty():
+            try:
+                raw_in = sys.stdin.read().strip()
+                if raw_in:
+                    payload_data = json.loads(raw_in)
+            except Exception:
+                pass
+        res = ingest_engine_datasets(payload=payload_data)
         print(json.dumps(res))
         return 0
 

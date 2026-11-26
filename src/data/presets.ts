@@ -431,6 +431,13 @@ export function getSafetySummaryLabel(config: SafetyFiltersConfig): string {
 
 export const STARTER_PROMPTS: StarterPrompt[] = [
   {
+    id: 'chrono-singularity-evo',
+    category: 'EVO 3D',
+    title: 'Chrono-Singularity Manifold',
+    prompt:
+      'Build the Chrono-Singularity Manifold evo/v1 3D scene with a Klein bottle + Mobius halo + TorusKnot core, 10-iteration FABRIK IK biomechanical arm chasing a softBody metaball on a Catmull-Rom pathFollow curve, trackTo/copyRotation/limitDistance constraints, quantum terrain, attractor force field, and proximity pulse trigger.',
+  },
+  {
     id: 'stopmotion-v3',
     category: 'Stop Motion v3',
     title: 'Director cut + math audio',

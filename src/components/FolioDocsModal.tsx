@@ -18,9 +18,15 @@ import {
   X,
 } from 'lucide-react';
 import { FOLIO_CHANGELOGS, FOLIO_CURRENT_VERSION } from '../data/changelogs';
+import {
+  ENGINE_DATASETS,
+  EngineDataset,
+  EngineDatasetId,
+  searchEngineDatasets,
+} from '../data/engineDatasets';
 import { FOLIO_DOCS_SECTIONS, FolioDocSection, searchFolioDocs } from '../data/folioDocs';
 
-export type DocsTabId = 'docs' | 'cli' | 'sdk' | 'changelog' | 'health';
+export type DocsTabId = 'docs' | 'datasets' | 'cli' | 'sdk' | 'changelog' | 'health';
 
 interface SystemHealthResponse {
   ok: boolean;
@@ -109,8 +115,14 @@ export const FolioDocsModal: React.FC<FolioDocsModalProps> = ({
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [loadingHealth, setLoadingHealth] = useState(false);
   const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoringBackupFile, setRestoringBackupFile] = useState<string | null>(null);
+  const [restoringLlm, setRestoringLlm] = useState(false);
+  const [restoreLlmNotice, setRestoreLlmNotice] = useState<string | null>(null);
   const [backupLabel, setBackupLabel] = useState('manual');
   const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [datasetEngine, setDatasetEngine] = useState<'all' | EngineDatasetId>('all');
+  const [trainingDatasets, setTrainingDatasets] = useState(false);
+  const [trainNotice, setTrainNotice] = useState<string | null>(null);
 
   const fetchSystemData = useCallback(async () => {
     setLoadingHealth(true);
@@ -191,6 +203,80 @@ export const FolioDocsModal: React.FC<FolioDocsModalProps> = ({
     }
   };
 
+  const handleRestoreBackup = async (filename: string) => {
+    if (restoringBackupFile) return;
+    setRestoringBackupFile(filename);
+    setBackupNotice(null);
+    try {
+      const res = await fetch('/api/system/backup/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename }),
+      });
+      const json = (await res.json()) as { ok: boolean; restored?: string; error?: string };
+      if (json.ok) {
+        setBackupNotice(`Restored snapshot ${json.restored || filename} and refreshed docs index.`);
+        void fetchSystemData();
+      } else {
+        setBackupNotice(json.error || 'Snapshot restore failed.');
+      }
+    } catch {
+      setBackupNotice('Failed to contact backup restore endpoint.');
+    } finally {
+      setRestoringBackupFile(null);
+    }
+  };
+
+  const handleRestoreLlm = async () => {
+    if (restoringLlm) return;
+    setRestoringLlm(true);
+    setRestoreLlmNotice('Checking RAM & streaming missing Local LLM / Docs to disk...');
+    try {
+      const res = await fetch('/api/system/restore-llm', { method: 'POST' });
+      const json = (await res.json()) as { ok: boolean; actions?: string[]; error?: string };
+      if (json.ok) {
+        setRestoreLlmNotice(`Ready: ${(json.actions || ['Verified']).join(' · ')}`);
+        void fetchSystemData();
+      } else {
+        setRestoreLlmNotice(json.error || 'Failed to restore Local LLM.');
+      }
+    } catch {
+      setRestoreLlmNotice('Failed to contact restore-llm endpoint.');
+    } finally {
+      setRestoringLlm(false);
+    }
+  };
+
+  const handleTrainDatasets = async () => {
+    if (trainingDatasets) return;
+    setTrainingDatasets(true);
+    setTrainNotice('Ingesting multi-engine datasets & Markov trigrams into SQLite knowledge.db + folio_docs.db...');
+    try {
+      const res = await fetch('/api/datasets/train', { method: 'POST' });
+      const json = (await res.json()) as {
+        ok: boolean;
+        datasets?: number;
+        parameters?: number;
+        examples?: number;
+        factsInserted?: number;
+        trigramsTrained?: number;
+        error?: string;
+      };
+      if (json.ok) {
+        setTrainNotice(
+          `Trained ${json.datasets ?? ENGINE_DATASETS.length} engines · ${json.parameters ?? 0} parameters · ${json.examples ?? 0} examples · ${json.trigramsTrained ?? 0} Markov trigrams`
+        );
+        void fetchSystemData();
+      } else {
+        setTrainNotice(json.error || 'Dataset training failed.');
+      }
+    } catch {
+      setTrainNotice('Failed to contact /api/datasets/train.');
+    } finally {
+      setTrainingDatasets(false);
+    }
+  };
+
   const docsList = useMemo<FolioDocSection[]>(() => {
     if (searchQuery.trim()) {
       return searchFolioDocs(searchQuery, 12);
@@ -199,6 +285,14 @@ export const FolioDocsModal: React.FC<FolioDocsModalProps> = ({
       (s) => s.category === 'Overview' || s.category === 'Models' || s.category === 'Engines' || s.category === 'Operations'
     );
   }, [searchQuery]);
+
+  const datasetsList = useMemo<EngineDataset[]>(() => {
+    const engineFilter = datasetEngine === 'all' ? undefined : datasetEngine;
+    if (searchQuery.trim()) {
+      return searchEngineDatasets(searchQuery, engineFilter);
+    }
+    return engineFilter ? ENGINE_DATASETS.filter((d) => d.id === engineFilter) : ENGINE_DATASETS;
+  }, [datasetEngine, searchQuery]);
 
   const cliSection = useMemo(
     () => FOLIO_DOCS_SECTIONS.find((s) => s.id === 'cli'),
@@ -214,6 +308,7 @@ export const FolioDocsModal: React.FC<FolioDocsModalProps> = ({
 
   const tabs: Array<{ id: DocsTabId; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'docs', label: 'Docs & Engines', icon: BookOpen },
+    { id: 'datasets', label: 'Datasets', icon: Database },
     { id: 'cli', label: 'CLI', icon: Terminal },
     { id: 'sdk', label: 'TS & Python SDK', icon: Code2 },
     { id: 'changelog', label: 'Changelog', icon: History },
@@ -292,14 +387,14 @@ export const FolioDocsModal: React.FC<FolioDocsModalProps> = ({
             })}
           </div>
 
-          {activeTab === 'docs' && (
+          {(activeTab === 'docs' || activeTab === 'datasets') && (
             <div className="relative w-full sm:w-56">
               <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search docs, ops, schemas..."
+                placeholder={activeTab === 'datasets' ? 'Filter examples & params...' : 'Search docs, ops, schemas...'}
                 className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs bg-neutral-100 dark:bg-white/[0.06] border border-neutral-200 dark:border-white/10 text-[#0d0d0d] dark:text-white placeholder:text-neutral-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
               />
             </div>
@@ -362,6 +457,179 @@ export const FolioDocsModal: React.FC<FolioDocsModalProps> = ({
               {docsList.length === 0 && (
                 <div className="text-center py-12 text-xs text-neutral-500">
                   No documentation sections matched "{searchQuery}".
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'datasets' && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-emerald-500/25 bg-white dark:bg-[#1c1d22] p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      { id: 'all', label: 'All Engines' },
+                      { id: 'evo3d', label: 'EVO 3D' },
+                      { id: 'threejs', label: 'Three.js' },
+                      { id: 'stopmotion', label: 'Stop Motion' },
+                      { id: 'pixelart', label: 'Pixel Art' },
+                      { id: 'hybrid', label: 'Hybrid' },
+                      { id: 'ik-math', label: 'IK & Math' },
+                    ] as Array<{ id: 'all' | EngineDatasetId; label: string }>
+                  ).map((item) => {
+                    const selected = datasetEngine === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setDatasetEngine(item.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                          selected
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-neutral-100 dark:bg-white/[0.06] text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200/70 dark:hover:bg-white/10'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void handleTrainDatasets()}
+                  disabled={trainingDatasets}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${trainingDatasets ? 'animate-spin' : ''}`} />
+                  <span>{trainingDatasets ? 'Training Neo 4...' : 'Train Neo 4 on Engine Datasets'}</span>
+                </button>
+              </div>
+
+              {trainNotice && (
+                <div className="px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono text-emerald-700 dark:text-emerald-300">
+                  {trainNotice}
+                </div>
+              )}
+
+              {datasetsList.map((ds) => (
+                <div
+                  key={ds.id}
+                  className="rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#1c1d22] p-4 sm:p-5 space-y-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-md bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-500/25">
+                          {ds.format}
+                        </span>
+                        <h3 className="text-sm sm:text-base font-bold">{ds.engineName}</h3>
+                      </div>
+                      <p className="text-xs text-neutral-600 dark:text-neutral-300 mt-1">{ds.summary}</p>
+                    </div>
+                  </div>
+
+                  <div className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-800 dark:text-amber-200">
+                    <strong>Design Rule:</strong> {ds.designRule}
+                  </div>
+
+                  {/* Calibrated Parameters Table */}
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] font-mono uppercase tracking-wider text-neutral-500">
+                      Calibrated Parameters ({ds.parameters.length})
+                    </div>
+                    <div className="overflow-x-auto rounded-xl border border-neutral-200/80 dark:border-white/10">
+                      <table className="w-full text-left border-collapse text-[11px]">
+                        <thead>
+                          <tr className="bg-neutral-100/80 dark:bg-white/[0.04] text-neutral-600 dark:text-neutral-300 font-mono">
+                            <th className="py-2 px-3 border-b border-neutral-200/70 dark:border-white/10">Parameter</th>
+                            <th className="py-2 px-3 border-b border-neutral-200/70 dark:border-white/10">Type</th>
+                            <th className="py-2 px-3 border-b border-neutral-200/70 dark:border-white/10">Recommended</th>
+                            <th className="py-2 px-3 border-b border-neutral-200/70 dark:border-white/10">Options / Range</th>
+                            <th className="py-2 px-3 border-b border-neutral-200/70 dark:border-white/10">Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ds.parameters.map((p) => (
+                            <tr key={p.param} className="border-b last:border-b-0 border-neutral-200/50 dark:border-white/[0.06]">
+                              <td className="py-2 px-3 font-mono font-semibold text-sky-700 dark:text-sky-300 whitespace-nowrap">{p.param}</td>
+                              <td className="py-2 px-3 font-mono text-neutral-500 whitespace-nowrap">{p.type}</td>
+                              <td className="py-2 px-3 font-mono text-emerald-700 dark:text-emerald-300">{p.recommendedValues}</td>
+                              <td className="py-2 px-3 font-mono text-neutral-600 dark:text-neutral-400">{p.rangeOrOptions}</td>
+                              <td className="py-2 px-3 text-neutral-600 dark:text-neutral-300">{p.notes}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Curated Examples */}
+                  <div className="space-y-3">
+                    <div className="text-[11px] font-mono uppercase tracking-wider text-neutral-500">
+                      Curated Training Examples ({ds.examples.length})
+                    </div>
+                    {ds.examples.map((ex) => (
+                      <div
+                        key={ex.id}
+                        className="rounded-xl border border-neutral-200/80 dark:border-white/10 bg-neutral-50/70 dark:bg-black/25 p-3.5 space-y-2.5"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-bold">{ex.title}</div>
+                            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                              Prompt: <span className="italic">"{ex.prompt}"</span>
+                            </div>
+                            <p className="text-[11.5px] text-neutral-600 dark:text-neutral-300 mt-1">{ex.description}</p>
+                          </div>
+                          {onSelectPrompt && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectPrompt(ex.prompt);
+                                onClose();
+                              }}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 transition-colors shrink-0"
+                            >
+                              Try in Chat
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5">
+                          {Object.entries(ex.keyValues).map(([k, v]) => (
+                            <span
+                              key={k}
+                              className="px-2 py-0.5 rounded-md text-[10.5px] font-mono bg-white dark:bg-white/[0.06] border border-neutral-200 dark:border-white/10 text-neutral-700 dark:text-neutral-300"
+                            >
+                              {k}: <strong>{String(v)}</strong>
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="rounded-xl border border-neutral-200 dark:border-white/10 overflow-hidden bg-[#0f1116] text-neutral-100">
+                          <div className="px-3 py-1.5 border-b border-white/10 flex items-center justify-between text-[11px] font-mono text-neutral-400">
+                            <span>{ex.language} · {ex.id}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(`ds-${ex.id}`, ex.code)}
+                              className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300"
+                            >
+                              {copiedId === `ds-${ex.id}` ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{copiedId === `ds-${ex.id}` ? 'Copied' : 'Copy Spec'}</span>
+                            </button>
+                          </div>
+                          <pre className="p-3 text-[11px] font-mono overflow-x-auto max-h-64">{ex.code}</pre>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {datasetsList.length === 0 && (
+                <div className="text-center py-12 text-xs text-neutral-500">
+                  No engine datasets matched "{searchQuery}".
                 </div>
               )}
             </div>
@@ -577,6 +845,23 @@ export const FolioDocsModal: React.FC<FolioDocsModalProps> = ({
                         <code>FOLIO_REMOTE_LLM_URL</code> or cloud models.
                       </div>
                     </div>
+
+                    <div className="pt-2 border-t border-neutral-200/70 dark:border-white/10 space-y-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleRestoreLlm()}
+                        disabled={restoringLlm}
+                        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-700 dark:text-sky-300 text-[11px] font-bold transition-colors disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${restoringLlm ? 'animate-spin' : ''}`} />
+                        <span>{restoringLlm ? 'Restoring Local LLM & Docs...' : 'Restore Local LLM & Docs'}</span>
+                      </button>
+                      {restoreLlmNotice && (
+                        <div className="text-[10.5px] font-mono text-sky-700 dark:text-sky-300 leading-snug">
+                          {restoreLlmNotice}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Disk & Sharded KB */}
@@ -694,6 +979,95 @@ FOLIO_REMOTE_LLM_MODEL=qwen2.5:32b`}</pre>
                 </div>
               </div>
 
+              {/* Where to Move Folio for Huge RAM & Real Storage-to-RAM Swap */}
+              <div className="rounded-2xl border border-violet-500/30 bg-violet-500/[0.06] dark:bg-violet-500/[0.08] p-4 sm:p-5 space-y-3">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-bold text-[#0d0d0d] dark:text-white">
+                    <HardDrive className="w-4 h-4 text-violet-500" />
+                    <span>Where to Move Folio for Huge RAM &amp; Real Storage-to-RAM Swap</span>
+                  </div>
+                  <p className="text-xs text-neutral-600 dark:text-neutral-300 mt-1 leading-relaxed">
+                    This preview sandbox runs in an unprivileged container overlay capped at <strong>4,096 MB RAM</strong> with{' '}
+                    <strong>0 MB swap</strong> (Linux <code>swapon</code> is blocked by container capabilities, and any OOM reboot wipes untracked{' '}
+                    <code>.folio-data</code> binaries). Move Folio using the included <code>Dockerfile</code> to unlock huge RAM and persistent swap:
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-[11px] font-mono">
+                  <div className="rounded-xl border border-neutral-200 dark:border-white/10 bg-[#0f1116] text-neutral-100 p-3 space-y-1.5">
+                    <div className="flex items-center justify-between text-violet-300 font-bold">
+                      <span>1. Google Cloud Run (8–32 GiB)</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleCopy(
+                            'move-cloudrun',
+                            'gcloud auth login && gcloud config set project YOUR_PROJECT_ID && gcloud run deploy folio --source . --region us-central1 --allow-unauthenticated --memory 8Gi --cpu 4 --port 3000 --set-env-vars GEMINI_API_KEY=YOUR_KEY'
+                          )
+                        }
+                        className="text-sky-400 hover:text-sky-300"
+                      >
+                        {copiedId === 'move-cloudrun' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <p className="text-[10.5px] text-neutral-400 font-sans">
+                      Uses included Dockerfile — zero swap setup, up to 32 GiB RAM.
+                    </p>
+                    <pre className="text-[10px] overflow-x-auto text-neutral-200">{`gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+gcloud run deploy folio --source . \\
+  --region us-central1 --allow-unauthenticated \\
+  --memory 8Gi --cpu 4 --port 3000 \\
+  --set-env-vars GEMINI_API_KEY=YOUR_KEY`}</pre>
+                  </div>
+
+                  <div className="rounded-xl border border-neutral-200 dark:border-white/10 bg-[#0f1116] text-neutral-100 p-3 space-y-1.5">
+                    <div className="flex items-center justify-between text-emerald-300 font-bold">
+                      <span>2. Linux VPS + 16GB Swap</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleCopy(
+                            'move-vps-swap',
+                            'fallocate -l 16G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile'
+                          )
+                        }
+                        className="text-sky-400 hover:text-sky-300"
+                      >
+                        {copiedId === 'move-vps-swap' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <p className="text-[10.5px] text-neutral-400 font-sans">
+                      Turns fast NVMe SSD storage into real OS swap.
+                    </p>
+                    <pre className="text-[10px] overflow-x-auto text-neutral-200">{`fallocate -l 16G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile && swapon /swapfile`}</pre>
+                  </div>
+
+                  <div className="rounded-xl border border-neutral-200 dark:border-white/10 bg-[#0f1116] text-neutral-100 p-3 space-y-1.5">
+                    <div className="flex items-center justify-between text-amber-300 font-bold">
+                      <span>3. Railway / Fly.io</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleCopy('move-docker', 'docker build -t folio . && docker run -p 3000:3000 -v folio_data:/app/.folio-data folio')
+                        }
+                        className="text-sky-400 hover:text-sky-300"
+                      >
+                        {copiedId === 'move-docker' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <p className="text-[10.5px] text-neutral-400 font-sans">
+                      Mount persistent volume at /app/.folio-data.
+                    </p>
+                    <pre className="text-[10px] overflow-x-auto text-neutral-200">{`docker build -t folio .
+docker run -p 3000:3000 \\
+  -v folio_data:/app/.folio-data folio`}</pre>
+                  </div>
+                </div>
+              </div>
+
               {/* Clean Snapshot Backups */}
               <div className="rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#1c1d22] p-4 sm:p-5 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -743,6 +1117,14 @@ FOLIO_REMOTE_LLM_MODEL=qwen2.5:32b`}</pre>
                       <div className="flex items-center gap-3 text-neutral-500">
                         <span>{b.sizeHuman}</span>
                         <span>{b.createdAt.slice(0, 19).replace('T', ' ')} UTC</span>
+                        <button
+                          type="button"
+                          onClick={() => void handleRestoreBackup(b.filename)}
+                          disabled={restoringBackupFile !== null}
+                          className="px-2 py-0.5 rounded-lg bg-neutral-200/80 dark:bg-white/10 hover:bg-neutral-300 dark:hover:bg-white/20 text-[#0d0d0d] dark:text-white font-semibold disabled:opacity-50"
+                        >
+                          {restoringBackupFile === b.filename ? 'Restoring...' : 'Restore'}
+                        </button>
                       </div>
                     </div>
                   ))}
