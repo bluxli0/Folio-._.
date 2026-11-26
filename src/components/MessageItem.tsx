@@ -55,6 +55,8 @@ interface MessageItemProps {
   onDeleteMessage: (messageId: string) => void;
   onRegenerate: () => void;
   onRetryError: () => void;
+  onRetryWithFallback?: () => void;
+  onSwitchToNeo4?: () => void;
   onPreviewCode?: (code: string, language: string) => void;
   onSaveCodeToFolder?: (code: string, language: string) => void;
   onCreateFoldersInWorkspace?: (
@@ -784,6 +786,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   onDeleteMessage,
   onRegenerate,
   onRetryError,
+  onRetryWithFallback,
+  onSwitchToNeo4,
   onPreviewCode,
   onSaveCodeToFolder,
   onCreateFoldersInWorkspace,
@@ -1189,13 +1193,33 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>{message.error}</span>
             </div>
-            <button
-              type="button"
-              onClick={onRetryError}
-              className="min-h-[36px] px-3.5 py-1.5 rounded-full bg-white dark:bg-[#2f2f2f] border border-red-200 dark:border-red-800 text-xs font-medium text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors whitespace-nowrap shrink-0 self-start sm:self-auto"
-            >
-              Retry
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0 self-start sm:self-auto">
+              {onRetryWithFallback && /high demand|auto fallback|503|429|quota|billing|unavailable/i.test(message.error) && (
+                <button
+                  type="button"
+                  onClick={onRetryWithFallback}
+                  className="min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] text-xs font-medium hover:opacity-90 transition-opacity whitespace-nowrap"
+                >
+                  Enable Auto Fallback & Retry
+                </button>
+              )}
+              {onSwitchToNeo4 && /neo 4|high demand|503|429|quota|unavailable/i.test(message.error) && (
+                <button
+                  type="button"
+                  onClick={onSwitchToNeo4}
+                  className="min-h-[36px] px-3.5 py-1.5 rounded-full bg-white dark:bg-[#2f2f2f] border border-red-200 dark:border-red-800 text-xs font-medium text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors whitespace-nowrap"
+                >
+                  Switch to Neo 4
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onRetryError}
+                className="min-h-[36px] px-3.5 py-1.5 rounded-full bg-white dark:bg-[#2f2f2f] border border-red-200 dark:border-red-800 text-xs font-medium text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors whitespace-nowrap"
+              >
+                Retry
+              </button>
+            </div>
           </div>
         ) : message.censored ? (
           <div className="rounded-2xl border border-neutral-200 dark:border-white/10 bg-[#f9f9f9] dark:bg-[#2a2a2a] px-4 py-3.5 flex items-center justify-between gap-4">

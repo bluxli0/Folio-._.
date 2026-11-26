@@ -10,39 +10,72 @@ export interface ChangelogEntry {
   }>;
 }
 
-export const FOLIO_CURRENT_VERSION = 'v4.1 · Folio Zero';
+export const FOLIO_CURRENT_VERSION = 'v4.2 · Folio Core';
 
 export const FOLIO_CHANGELOGS: ChangelogEntry[] = [
+  {
+    version: 'v4.2 · Folio Core',
+    codename: 'Folio Core',
+    date: 'Nov 2026',
+    summary:
+      'Complete Folio Documentation Hub, Official TypeScript & Python SDKs, `folio` CLI, Disk-Sharded SQLite FTS5/BM25 Knowledge Engine (low-RAM streaming for 100M+ indexed rows), Optional Tiny Local LLM RAG Bridge, 4 GB RAM Watchdog & Automated Snapshot Backups, 100+ new tags/functions per creative engine, and Resilient Upstream/Blender Fallbacks.',
+    highlights: [
+      {
+        category: 'Models & Chat',
+        title: 'Disk-Sharded Neo 4 RAG + Tiny LLM Bridge & Model Grounding',
+        detail:
+          'Added disk-backed sharded SQLite FTS5 + BM25 indexing (capped <150 MB RAM), automatic Folio Docs & Changelog indexing, `folio_docs_lookup` tool + prompt grounding to cut schema hallucinations, optional tiny Q4 local LLM bridge with strict RAM guards, and Gemini 2.5 GA fallback + Neo 4 last-resort failover.',
+      },
+      {
+        category: 'Studio & Audio',
+        title: 'Official Folio CLI, TypeScript SDK, Python SDK & Master Docs',
+        detail:
+          'Shipped complete Markdown & in-app Docs/SDK/CLI Modal, typed TypeScript SDK (`src/sdk/folioSdk.ts`) and Python SDK (`python/folio_sdk.py`) with schema builders, and `folio` CLI (`status`, `doctor`, `docs`, `changelog`, `sdk`, `kb`, `validate`, `backup`).',
+      },
+      {
+        category: 'Engines',
+        title: '100+ New Tags & Functions Across Every Creative Engine',
+        detail:
+          'Added 120+ unified math functions, 36 easings, 20 audio presets + 25 AST synth funcs, 16 vector brushes, 30+ Pixel v3 procedural ops + 18 shaders + 13 palettes, 14+ EVO 3D/Three.js PBR materials & geometries, and Studio-Demo validation fixes.',
+      },
+      {
+        category: 'Fixes & Polish',
+        title: '4 GB RAM Watchdog, Snapshot Backups & Headless Blender Fallback',
+        detail:
+          'Added live memory watchdog throttling heavy subprocesses before OOM crashes, one-click `.tar.gz` clean backups (`/api/system/backup`), fixed Blender toolchain path detection, and added pure-Python `.obj`/`.gltf` fallback when Blender binary is absent.',
+      },
+    ],
+  },
   {
     version: 'v4.1 · Folio Zero',
     codename: 'Folio Zero',
     date: 'Nov 2026',
     summary:
-      'Godot 4 CLI + Multi-Platform Export Presets, CMake/MSVC/Clang/Kotlin Toolchains, Portable Blender LTS, Mod Studio + SQLite + CI/CD Scaffolding, Reverse Engineering Inspector, Experimental Python Neo 4 Rule AI, Thinking/Entropic/Meta Modes, bluxli.me Auth Rule, and Live Logs Tab.',
+      'Godot 4 CLI + Multi-Platform Export Presets, CMake/MSVC/Clang/Kotlin Toolchains, Antigravity Agent CLI, Gemini Flash Models, EVO 3D Interactive Changelogs, Gradient + Math Graph Functions across all engines, Experimental Python Neo 4 Rule AI (3.1B taxonomy & Aleph-Zero), and Live Logs.',
     highlights: [
       {
         category: 'Models & Chat',
-        title: 'Neo 4 Python Rule AI + 5-Level Thinking + Entropic Auditor + Meta Scripting',
+        title: 'Neo 4 Python Rule AI (3.1B Research & Aleph-Zero) + Gemini Flash Models',
         detail:
-          'Experimental Python rule-based engine with compositional subword tokenization, ±k semantic context disambiguation, OSASCOMP-rated Order-3 Markov Chain, AST math/physics solver, optional Shannon-entropy Entropic Auditor (OFF by default), and full studio settings parity.',
+          'Added Gemini 4 Flash & Omni 1.2 Flash alongside Hydrogen/Neon/Carbon. Trained Neo 4 on the 520k–3.1B linguistic scale, Lego subword bricks, ±k context disambiguation, OSASCOMP grammar scoring, and Aleph-Zero mathematical continuum.',
       },
       {
         category: 'Engines',
-        title: 'Godot 4 CLI, CMake + MSVC Cross-Toolchain, Kotlin Compiler & Fixed Blender + Three.js',
+        title: 'EVO 3D Engine Changelogs + Gradients & Math Graphs Across All Engines',
         detail:
-          'Added portable Blender LTS binary resolution, Three.js Sandpack CDN rewrite + pinned r169 compatibility, Godot 4.3 CLI + multi-platform export_presets.cfg (Linux/Win/macOS/Web/Android/iOS), CMake + MinGW-w64 MSVC cross-toolchain, and Kotlin 2.0 compiler.',
+          'Embedded live EVO 3D PBR visualizer into Changelogs; added 3D graph/surface plotters & vertex gradients to EVO 3D and Three.js Studio, conic/graph ops to Pixel v3, and animated math function plotters with multi-stop gradients to Stop Motion v3.',
       },
       {
         category: 'Studio & Audio',
-        title: 'Mod Creation Studio, Reverse Engineering Inspector & Workspace Fallback',
+        title: 'Antigravity Agent CLI, Godot 4.3 CLI, CMake/MSVC, Kotlin 2.0 & Mod Studio',
         detail:
-          'Scaffolds CLI, Mod Loader, SDK, Object IDs, EVO/Blender 3D, Pixel v3, StopMotion v3, SQLite DB, and CI/CD inside isolated workspace repos; inspects GLB/ZIP/APK/PCK/PNG/ELF binaries safely.',
+          'Added Antigravity autonomous software engineering CLI (antigravity_cli) with workspace sandbox fallback & clean snapshot backup, Godot 4.3 multi-platform exports, CMake/MSVC cross-toolchain, SQLite Mod Studio, and Reverse Engineering inspector.',
       },
       {
         category: 'Fixes & Polish',
-        title: 'Live Logs (Log | Warn | Error | Success) Tab & bluxli.me Domain Login',
+        title: 'Zero Version Mismatch + Live Logs (Log | Warn | Error | Success) & bluxli.me Auth',
         detail:
-          'Structured telemetry Logs tab inside Preview Drawer; Email/Password sign-in allowing @bluxli.me without verification email while enforcing verification on external domains.',
+          'Synchronized Folio v4.1 (Folio Zero) across runtime system instructions, composer, previews, and presets; added structured telemetry Logs tab and instant @bluxli.me login.',
       },
     ],
   },

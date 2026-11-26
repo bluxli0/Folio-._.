@@ -861,7 +861,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 ? 'Describe an image to synthesize with Nano Banana Lite...'
                 : immersivePureCode
                 ? 'Pure Code Mode — describe the app, 3D scene, or animation to generate in pure runnable code...'
-                : 'Message Folio v(OXYGEN)...'
+                : 'Message Folio Zero (v4.1)...'
             }
             aria-label="Message input"
             className="w-full resize-none bg-transparent px-5 pt-3.5 pb-2 text-[15.5px] leading-relaxed text-[#0d0d0d] dark:text-[#ececec] placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus:outline-none chat-scroll max-h-[200px]"
@@ -1058,7 +1058,7 @@ export const Composer: React.FC<ComposerProps> = ({
 
         {!centered && (
           <p className="mt-2 text-center text-[11px] text-neutral-500 dark:text-neutral-400">
-            Folio v(OXYGEN) can make mistakes. Verify important information.
+            Folio Zero (v4.1) can make mistakes. Verify important information.
           </p>
         )}
       </div>

@@ -272,7 +272,7 @@ export const ThreeDStudio: React.FC<ThreeDStudioProps> = ({
               aria-expanded={demosMenuOpen}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/15 bg-white/5 text-xs font-medium text-white hover:bg-white/10 transition-colors"
             >
-              <span>Demos (10)</span>
+              <span>Demos ({THREE_D_DEMOS.length})</span>
               <ChevronDown className="w-3.5 h-3.5 text-neutral-400" />
             </button>
 
@@ -482,6 +482,20 @@ export const ThreeDStudio: React.FC<ThreeDStudioProps> = ({
                     >
                       + Crystal
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddObject('waveSurface')}
+                      className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 text-xs text-cyan-200"
+                    >
+                      + Wave Surface
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddObject('graphRibbon')}
+                      className="px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 text-xs text-purple-200"
+                    >
+                      + Graph Ribbon
+                    </button>
                   </div>
                 </div>
 
@@ -575,6 +589,18 @@ export const ThreeDStudio: React.FC<ThreeDStudioProps> = ({
                   className="w-4 h-4 rounded accent-blue-600"
                 />
               </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-neutral-300">Show Collision Hitboxes</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(sceneSpec.showHitboxes)}
+                  onChange={(e) =>
+                    setSceneSpec((prev) => ({ ...prev, showHitboxes: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded accent-rose-500"
+                />
+              </div>
             </div>
           </div>
 
@@ -646,12 +672,40 @@ export const ThreeDStudio: React.FC<ThreeDStudioProps> = ({
                   >
                     <option value="rotate">Continuous Spin</option>
                     <option value="bounce">Vertical Bobbing</option>
+                    <option value="physicsBounce">Rigid-Body Physics</option>
                     <option value="pulse">Breathing Scale</option>
                     <option value="float">Gentle Float & Tilt</option>
                     <option value="orbit">Axis Orbit</option>
                     <option value="chaos">Chaotic Gyro</option>
                     <option value="none">Static (No Animation)</option>
                   </select>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-neutral-300">Object Hitbox Wireframe</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selectedObject.hitbox)}
+                    onChange={(e) => handleUpdateSelectedObject({ hitbox: e.target.checked })}
+                    className="w-4 h-4 rounded accent-cyan-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-neutral-300">Gravity & Collision Physics</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selectedObject.physics?.enabled || selectedObject.animation === 'physicsBounce')}
+                    onChange={(e) =>
+                      handleUpdateSelectedObject({
+                        animation: e.target.checked ? 'physicsBounce' : 'rotate',
+                        physics: e.target.checked
+                          ? { enabled: true, vx: 1.5, vy: 0.4, vz: 1.1, gravity: -9.8, restitution: 0.86, floorY: -1.8, walls: [2.8, 3.2, 2.8] }
+                          : { enabled: false },
+                      })
+                    }
+                    className="w-4 h-4 rounded accent-blue-500"
+                  />
                 </div>
               </div>
             ) : (

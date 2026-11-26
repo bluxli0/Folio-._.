@@ -801,4 +801,160 @@ export const PIXEL_ART_DEMOS: PixelArtDemo[] = [
       ];
     },
   },
+  {
+    id: 'quantum-wave-graph',
+    title: '11. Quantum Wave & Harmonic Graph (128×128)',
+    category: 'Math & Graphs',
+    description: 'Animated 128×128 Pixel Engine v3 harmonic interference graph with aurora gradient & glow',
+    width: 128,
+    height: 128,
+    fps: 12,
+    palette: ['#050816', '#0f172a', '#38bdf8', '#8b5cf6', '#ec4899', '#facc15', '#34d399', '#ffffff'],
+    buildFrames: () => {
+      const specJson = JSON.stringify({
+        format: 'pixelart/v3',
+        width: 128,
+        height: 128,
+        fps: 12,
+        frameCount: 16,
+        gradients: {
+          deepSky: {
+            type: 'linear',
+            from: [0, 0],
+            to: [0, 128],
+            dither: 'bayer4',
+            stops: [
+              { at: 0, color: '#030712' },
+              { at: 0.55, color: '#0f172a' },
+              { at: 1, color: '#1e1b4b' },
+            ],
+          },
+        },
+        backdrop: [
+          { op: 'gradient', gradient: 'deepSky' },
+          { op: 'stardust', count: 55, color: '#fef08a', seed: 19 },
+          { op: 'aurora', y: 24, amp: 8, thickness: 22, colors: ['#34d399', '#38bdf8', '#a855f7'] },
+        ],
+        draw: [
+          {
+            op: 'graph',
+            expr: '0.72 * sin(x * 2.2 + t * TAU) * cos(x * 0.65 - t * TAU)',
+            xmin: -4,
+            xmax: 4,
+            ymin: -1.1,
+            ymax: 1.1,
+            thickness: 2,
+            fillUnder: true,
+            colors: ['#38bdf8', '#a855f7', '#ec4899', '#facc15'],
+          },
+          {
+            op: 'graph',
+            expr: '0.45 * cos(x * 3.1 - t * TAU)',
+            xmin: -4,
+            xmax: 4,
+            ymin: -1.1,
+            ymax: 1.1,
+            thickness: 1,
+            grid: false,
+            colors: ['#34d399', '#22d3ee', '#818cf8'],
+          },
+        ],
+        shaders: [{ type: 'glow', intensity: 0.45 }],
+      });
+      const parsed = parsePixelArtCode(specJson);
+      return parsed.spec?.frames || [];
+    },
+  },
+  {
+    id: 'conic-neon-prism',
+    title: '12. Conic Neon Prism & Voxels (64×64)',
+    category: 'Gradients & 3D',
+    description: '64×64 conic radial spectral backdrop with isometric shaded 3D pixel cubes & drop shadows',
+    width: 64,
+    height: 64,
+    fps: 8,
+    palette: ['#090d16', '#38bdf8', '#ec4899', '#facc15', '#10b981', '#a855f7', '#ffffff'],
+    buildFrames: () => {
+      const specJson = JSON.stringify({
+        format: 'pixelart/v3',
+        width: 64,
+        height: 64,
+        fps: 8,
+        frameCount: 1,
+        gradients: {
+          conicSpectrum: {
+            type: 'conic',
+            cx: 32,
+            cy: 30,
+            dither: 'bayer4',
+            stops: [
+              { at: 0, color: '#0f172a' },
+              { at: 0.25, color: '#1e1b4b' },
+              { at: 0.5, color: '#3b0764' },
+              { at: 0.75, color: '#083344' },
+              { at: 1, color: '#0f172a' },
+            ],
+          },
+        },
+        backdrop: [
+          { op: 'gradient', gradient: 'conicSpectrum' },
+          { op: 'stardust', count: 35, color: '#ffffff', seed: 7 },
+        ],
+        draw: [
+          { op: 'dropshadow', cx: 32, cy: 49, rx: 18, ry: 5, color: '#020617', opacity: 0.6 },
+          { op: 'box3d', x: 14, y: 28, w: 14, h: 16, z: 6, color: '#38bdf8' },
+          { op: 'box3d', x: 30, y: 24, w: 14, h: 20, z: 7, color: '#ec4899' },
+          { op: 'box3d', x: 22, y: 34, w: 12, h: 12, z: 5, color: '#facc15' },
+        ],
+        shaders: [{ type: 'vignette', intensity: 0.4 }],
+      });
+      const parsed = parsePixelArtCode(specJson);
+      return parsed.spec?.frames || [];
+    },
+  },
+  {
+    id: 'pixel-physics-hitbox-arena',
+    title: '13. 2D Physics & Hitbox Arena (64×64)',
+    category: 'Physics & Hitbox',
+    description: '16-frame 64×64 Pixel Engine v3 physics arena with gravity bounce, elastic collisions & reactive pixel hitboxes',
+    width: 64,
+    height: 64,
+    fps: 12,
+    palette: ['#070b14', '#1e293b', '#38bdf8', '#a855f7', '#facc15', '#f43f5e', '#22d3ee', '#ffffff'],
+    buildFrames: () => {
+      const specJson = JSON.stringify({
+        format: 'pixelart/v3',
+        width: 64,
+        height: 64,
+        fps: 12,
+        frameCount: 16,
+        gradients: {
+          arenaSky: {
+            type: 'linear',
+            from: [0, 0],
+            to: [0, 64],
+            dither: 'bayer4',
+            stops: [
+              { at: 0, color: '#060a14' },
+              { at: 0.75, color: '#0f172a' },
+              { at: 1, color: '#1e293b' },
+            ],
+          },
+        },
+        backdrop: [
+          { op: 'gradient', gradient: 'arenaSky' },
+          { op: 'stardust', count: 24, color: '#e2e8f0', seed: 11 },
+          { op: 'rect', x: 3, y: 3, w: 58, h: 56, color: '#334155', filled: false },
+        ],
+        draw: [
+          { op: 'physicsball', x0: 16, y0: 16, vx: 36, vy: -12, gravity: 110, restitution: 0.9, r: 6, color: '#38bdf8', hitbox: true, hitboxColor: '#22d3ee', bounds: [4, 4, 60, 58] },
+          { op: 'physicsball', x0: 48, y0: 14, vx: -34, vy: 8, gravity: 110, restitution: 0.9, r: 5, color: '#a855f7', hitbox: true, hitboxColor: '#22d3ee', bounds: [4, 4, 60, 58] },
+          { op: 'physicsbox', x0: 32, y0: 38, vx: 18, vy: -24, gravity: 120, restitution: 0.85, w: 9, h: 8, color: '#facc15', hitbox: true, hitboxColor: '#34d399', bounds: [4, 4, 60, 58] },
+        ],
+        shaders: [{ type: 'glow', intensity: 0.35 }],
+      });
+      const parsed = parsePixelArtCode(specJson);
+      return parsed.spec?.frames || [];
+    },
+  },
 ];

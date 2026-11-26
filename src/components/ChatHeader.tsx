@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  BookOpen,
   Box,
   Braces,
   Check,
@@ -68,6 +69,7 @@ interface ChatHeaderProps {
   onChangeRetention?: (mode: RetentionMode) => void;
   onChangeTriModelConfig?: (next: TriModelConfig) => void;
   onOpenChangelogs?: () => void;
+  onOpenDocs?: (tab?: 'docs' | 'cli' | 'sdk' | 'changelog' | 'health') => void;
   onOpenSafety: () => void;
   onOpenSessionPrivacy: () => void;
   onOpenCodePreview: () => void;
@@ -87,6 +89,8 @@ interface ChatHeaderProps {
   enabledToolsCount?: number;
   userAccount?: { displayName: string; email: string; photoURL?: string } | null;
   onOpenAccount?: () => void;
+  neoMode?: 'llm' | 'rule';
+  onChangeNeoMode?: (mode: 'llm' | 'rule') => void;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -113,6 +117,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onChangeRetention,
   onChangeTriModelConfig,
   onOpenChangelogs,
+  onOpenDocs,
   onOpenSafety,
   onOpenSessionPrivacy,
   onOpenCodePreview,
@@ -132,6 +137,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   enabledToolsCount = 0,
   userAccount,
   onOpenAccount,
+  neoMode = 'llm',
+  onChangeNeoMode,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [studiosOpen, setStudiosOpen] = useState(false);
@@ -149,7 +156,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const headingsDropdownRef = useRef<HTMLDivElement>(null);
   const fontDropdownRef = useRef<HTMLDivElement>(null);
 
-  const currentModel = getModelOption(modelId);
+  const currentModel = getModelOption(modelId, neoMode);
   const anyStudioOpen =
     googleFlowOpen || threeDOpen || pixelArtOpen || stopMotionOpen || webPreviewOpen;
   const activeRetentionOption =
@@ -239,7 +246,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
   return (
     <header className="h-14 shrink-0 border-b border-neutral-200/70 dark:border-white/10 bg-white/95 dark:bg-[#212121]/95 backdrop-blur-sm px-2.5 sm:px-4 flex items-center justify-between gap-2 z-20">
-      {/* Left: Sidebar, New Chat, Model Selector & v(OXYGEN) Changelogs */}
+      {/* Left: Sidebar, New Chat, Model Selector & Folio Zero Changelogs */}
       <div className="flex items-center gap-1 min-w-0 flex-1">
         <button
           type="button"
@@ -277,6 +284,35 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             <ChevronDown className="w-4 h-4 text-neutral-500 dark:text-neutral-400 shrink-0" />
           </button>
 
+          {modelId === 'neo-4' && (
+            <div className="hidden sm:inline-flex items-center rounded-xl p-0.5 bg-neutral-200/80 dark:bg-black/40 border border-neutral-300/80 dark:border-white/10 text-xs shrink-0 ml-1">
+              <button
+                type="button"
+                onClick={() => onChangeNeoMode?.('llm')}
+                className={`px-2 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  neoMode === 'llm'
+                    ? 'bg-white dark:bg-neutral-800 text-sky-600 dark:text-sky-400 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800 dark:hover:text-white'
+                }`}
+                title="When using LLM it's smarter"
+              >
+                ⚡ LLM
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeNeoMode?.('rule')}
+                className={`px-2 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  neoMode === 'rule'
+                    ? 'bg-white dark:bg-neutral-800 text-amber-600 dark:text-amber-400 shadow-sm'
+                    : 'text-neutral-500 hover:text-neutral-800 dark:hover:text-white'
+                }`}
+                title="When using rule-based Markov chains 🥀"
+              >
+                🥀 Rule AI
+              </button>
+            </div>
+          )}
+
           {menuOpen && (
             <div
               role="listbox"
@@ -284,48 +320,131 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               className="absolute left-0 top-full mt-1.5 w-[300px] sm:w-[345px] max-h-[75vh] overflow-y-auto chat-scroll rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#2f2f2f] shadow-xl p-1.5 z-40"
             >
               <div className="space-y-0.5">
-                {MODEL_OPTIONS.map((option) => {
+                {MODEL_OPTIONS.map((option, idx) => {
+                  const prevGroup = idx > 0 ? MODEL_OPTIONS[idx - 1].group : undefined;
+                  const showGroupHeader = Boolean(option.group && option.group !== prevGroup);
                   const selected = option.id === modelId;
+                  const isNeo4 = option.id === 'neo-4';
+                  const displayName = isNeo4
+                    ? neoMode === 'llm'
+                      ? 'Neo 4 (Neural LLM)'
+                      : 'Neo 4 (Rule AI)'
+                    : option.name;
+                  const displayDesc = isNeo4
+                    ? neoMode === 'llm'
+                      ? "When using LLM it's smarter"
+                      : 'When using rule-based Markov chains 🥀'
+                    : option.description;
+
                   return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      onClick={() => {
-                        onChangeModel(option.id);
-                        setMenuOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
-                        selected
-                          ? 'bg-[#f4f4f4] dark:bg-white/10'
-                          : 'hover:bg-[#f4f4f4]/70 dark:hover:bg-white/5'
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] truncate">
-                            {option.name}
-                          </span>
-                          {option.isPaid && (
-                            <span className="text-[10px] font-mono uppercase tracking-wide text-amber-600 dark:text-amber-400 shrink-0">
-                              Paid
-                            </span>
-                          )}
-                          {option.speedLabel && !option.isPaid && (
-                            <span className="text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
-                              {option.speedLabel}
+                    <React.Fragment key={option.id}>
+                      {showGroupHeader && (
+                        <div
+                          className={`px-3 pt-2 pb-1 flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-neutral-400 dark:text-neutral-500 ${
+                            idx > 0 ? 'mt-1 border-t border-neutral-200/60 dark:border-white/10' : ''
+                          }`}
+                        >
+                          <span>{option.group}</span>
+                          {option.group === 'Gemini 4 Series' && (
+                            <span className="text-[9.5px] text-sky-500 dark:text-sky-400 font-semibold">
+                              Grouped
                             </span>
                           )}
                         </div>
-                        <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 leading-snug">
-                          {option.description}
-                        </div>
-                      </div>
-                      {selected && (
-                        <Check className="w-4 h-4 text-[#0d0d0d] dark:text-white shrink-0" />
                       )}
-                    </button>
+                      <div
+                        className={`w-full rounded-xl transition-colors ${
+                          selected
+                            ? 'bg-[#f4f4f4] dark:bg-white/10'
+                            : 'hover:bg-[#f4f4f4]/70 dark:hover:bg-white/5'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => {
+                            onChangeModel(option.id);
+                            setMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-[#0d0d0d] dark:text-[#ececec] truncate">
+                                {displayName}
+                              </span>
+                              {option.isPaid && (
+                                <span className="text-[10px] font-mono uppercase tracking-wide text-amber-600 dark:text-amber-400 shrink-0">
+                                  Paid
+                                </span>
+                              )}
+                              {option.speedLabel && !option.isPaid && (
+                                <span className="text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
+                                  {option.speedLabel}
+                                </span>
+                              )}
+                            </div>
+                            <div className={`text-xs mt-0.5 leading-snug ${isNeo4 ? (neoMode === 'llm' ? 'text-sky-600 dark:text-sky-400 font-medium' : 'text-amber-600 dark:text-amber-400 font-medium') : 'text-neutral-500 dark:text-neutral-400'}`}>
+                              {displayDesc}
+                            </div>
+                          </div>
+                          {selected && (
+                            <Check className="w-4 h-4 text-[#0d0d0d] dark:text-white shrink-0" />
+                          )}
+                        </button>
+
+                        {isNeo4 && (
+                          <div
+                            className="px-3 pb-2.5 pt-1 border-t border-neutral-200/60 dark:border-white/10"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-1.5">
+                              <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+                                LLM / Rule AI:
+                              </span>
+                              <div className="inline-flex rounded-lg p-0.5 bg-neutral-200/80 dark:bg-black/50 border border-neutral-300/80 dark:border-white/10 text-[11px]">
+                                <button
+                                  type="button"
+                                  onClick={() => onChangeNeoMode?.('llm')}
+                                  className={`px-2.5 py-0.5 rounded-md font-semibold transition-all ${
+                                    neoMode === 'llm'
+                                      ? 'bg-white dark:bg-neutral-800 text-sky-600 dark:text-sky-400 shadow-sm'
+                                      : 'text-neutral-500 hover:text-neutral-800 dark:hover:text-white'
+                                  }`}
+                                >
+                                  ⚡ LLM
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onChangeNeoMode?.('rule')}
+                                  className={`px-2.5 py-0.5 rounded-md font-semibold transition-all ${
+                                    neoMode === 'rule'
+                                      ? 'bg-white dark:bg-neutral-800 text-amber-600 dark:text-amber-400 shadow-sm'
+                                      : 'text-neutral-500 hover:text-neutral-800 dark:hover:text-white'
+                                  }`}
+                                >
+                                  🥀 Rule AI
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-neutral-500 dark:text-neutral-400 pt-0.5">
+                              <span>Remote Huge-RAM Bridge:</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMenuOpen(false);
+                                  onOpenDocs?.('health');
+                                }}
+                                className="font-mono text-sky-500 hover:underline"
+                              >
+                                Open RAM &amp; Remote ↗
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </React.Fragment>
                   );
                 })}
               </div>
@@ -378,6 +497,20 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           >
             <History className="w-3 h-3" />
             <span>{FOLIO_CURRENT_VERSION}</span>
+          </button>
+        )}
+
+        {/* Docs, CLI, SDK & RAM Health button */}
+        {onOpenDocs && (
+          <button
+            type="button"
+            onClick={() => onOpenDocs('docs')}
+            title="Open Folio Documentation, CLI, TypeScript/Python SDK & RAM/Backups"
+            aria-label="Open Folio Docs & SDK"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-mono font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors whitespace-nowrap shrink-0"
+          >
+            <BookOpen className="w-3 h-3" />
+            <span className="hidden sm:inline">Docs &amp; SDK</span>
           </button>
         )}
       </div>

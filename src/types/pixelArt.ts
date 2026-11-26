@@ -17,12 +17,27 @@ export type PixelShaderType =
   | 'crt'
   | 'chromatic'
   | 'glow'
-  | 'posterize';
+  | 'posterize'
+  | 'bloom'
+  | 'dither'
+  | 'outline'
+  | 'halftone'
+  | 'sepia'
+  | 'invert'
+  | 'pixelate'
+  | 'glitch'
+  | 'emboss'
+  | 'edge'
+  | 'tint'
+  | 'duotone';
 
 export interface PixelShaderSpec {
   type: PixelShaderType;
   intensity?: number;
   color?: string;
+  secondaryColor?: string;
+  threshold?: number;
+  blockSize?: number;
 }
 
 export interface PixelArtFrame {
@@ -36,7 +51,7 @@ export interface PixelArtSpec {
   format?: string;
   width: number;
   height: number;
-  palette?: string[];
+  palette?: string | string[];
   fps?: number;
   loop?: boolean;
   shaders?: PixelShaderSpec[];

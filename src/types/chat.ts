@@ -1,15 +1,24 @@
 export type ModelChoiceId =
   | 'auto'
-  | 'flash-lite-3.1'
+  | 'flash-4'
   | 'hydrogen-4-fast'
   | 'hydrogen-4-balanced'
   | 'hydrogen-4-deep'
   | 'neon-4'
   | 'carbon-4'
+  | 'argon-4'
+  | 'flash-3.8'
+  | 'flash-lite-3.1'
+  | 'omni-flash-1.2'
+  | 'live-extended-3.8'
+  | 'gemma-3-27b'
+  | 'gemma-3-12b'
   | 'neo-4'
   | 'nano-banana-lite';
 
 export type ThinkingMode = 'minimal' | 'low' | 'medium' | 'high' | 'deep';
+
+export type NeoMode = 'llm' | 'rule';
 
 export interface EntropicAuditReport {
   shannonEntropyBits: number;
@@ -26,6 +35,7 @@ export interface ModelOption {
   shortName: string;
   description: string;
   apiModel: string;
+  group?: string;
   speedLabel?: string;
   isPaid?: boolean;
   isImageOnly?: boolean;
@@ -154,6 +164,7 @@ export interface ConversationThread {
   messages: ChatMessage[];
   modelId: ModelChoiceId;
   autoFallback: boolean;
+  neoMode?: NeoMode;
   thinkingMode?: ThinkingMode;
   entropicAuditorEnabled?: boolean;
   semanticEngineEnabled?: boolean;

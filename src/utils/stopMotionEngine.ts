@@ -1,30 +1,12 @@
 import { StopMotionFrame, VectorStopMotionSpec } from '../types/stopMotion';
 import type { MathAudioTrackSpec } from './mathAudioSynth';
+import {
+  applyUnifiedEasing,
+  UNIFIED_MATH_FUNCS,
+  type UnifiedEasingName,
+} from './mathFunctions';
 
-export type EasingName =
-  | 'linear'
-  | 'in'
-  | 'out'
-  | 'inOut'
-  | 'easeIn'
-  | 'easeOut'
-  | 'easeInOut'
-  | 'exponential'
-  | 'easeInExpo'
-  | 'easeOutExpo'
-  | 'easeInOutExpo'
-  | 'bounce'
-  | 'easeOutBounce'
-  | 'elastic'
-  | 'easeInElastic'
-  | 'easeOutElastic'
-  | 'back'
-  | 'backIn'
-  | 'backOut'
-  | 'backInOut'
-  | 'easeInBack'
-  | 'easeOutBack'
-  | 'easeInOutBack';
+export type EasingName = UnifiedEasingName;
 
 export interface StopMotionKeyframe {
   at: number; // 0..1 normalized progress (or >1 treated as frame index)
@@ -81,6 +63,27 @@ export interface StopMotionMotionSpec {
     amp?: number;
     freq?: number;
     phase?: number;
+  };
+  shake?: number | { ampX?: number; ampY?: number; freq?: number; seed?: number };
+  flicker?: { min?: number; max?: number; freq?: number; seed?: number };
+  spiral?: {
+    cx?: number;
+    cy?: number;
+    r0?: number;
+    r1?: number;
+    turns?: number;
+    phase?: number;
+  };
+  bezierPath?: {
+    p0: [number, number];
+    p1: [number, number];
+    p2: [number, number];
+    p3: [number, number];
+  };
+  trail?: {
+    count?: number;
+    lagStep?: number;
+    opacityDecay?: number;
   };
 }
 
@@ -150,8 +153,22 @@ export interface StopMotionAssetRefSpec {
 }
 
 export interface StopMotionThreeDLayerSpec {
-  shape: 'cube' | 'sphere' | 'cylinder' | 'torus' | 'pyramid' | 'crystal';
+  shape:
+    | 'cube'
+    | 'sphere'
+    | 'cylinder'
+    | 'torus'
+    | 'pyramid'
+    | 'crystal'
+    | 'octahedron'
+    | 'icosahedron'
+    | 'cone'
+    | 'ring'
+    | 'capsule'
+    | 'prism'
+    | 'gear';
   size?: number;
+  teeth?: number;
   rx?: number | string;
   ry?: number | string;
   rz?: number | string;
@@ -163,8 +180,47 @@ export interface StopMotionThreeDLayerSpec {
   wireframe?: boolean;
 }
 
+export interface StopMotionParticlesSpec {
+  count?: number;
+  shape?: 'circle' | 'star' | 'spark' | 'snow' | 'smoke' | 'confetti' | 'bubble';
+  colors?: string[];
+  cx?: number;
+  cy?: number;
+  spreadX?: number;
+  spreadY?: number;
+  speed?: number;
+  gravity?: number;
+  size?: number;
+  seed?: number;
+  glow?: boolean;
+}
+
 export interface StopMotionCurveSpec {
-  type: 'hilbert' | 'dragon' | 'koch' | 'lissajous' | 'spirograph' | 'rose' | 'spiral';
+  type:
+    | 'hilbert'
+    | 'dragon'
+    | 'koch'
+    | 'lissajous'
+    | 'spirograph'
+    | 'rose'
+    | 'spiral'
+    | 'graph'
+    | 'function'
+    | 'parametric'
+    | 'butterfly'
+    | 'cardioid'
+    | 'lemniscate'
+    | 'astroid'
+    | 'hypocycloid'
+    | 'epicycloid'
+    | 'fermat'
+    | 'archimedes'
+    | 'phyllotaxis'
+    | 'sinewave'
+    | 'fourier'
+    | 'bezier'
+    | 'catmull'
+    | 'starpolygon';
   order?: number; // for hilbert/dragon/koch (1..6)
   size?: number; // bounding box / scale
   cx?: number;
@@ -176,12 +232,24 @@ export interface StopMotionCurveSpec {
   d?: number; // spirograph pen offset
   delta?: number; // lissajous phase radians
   turns?: number;
-  petals?: number; // rose k
+  petals?: number; // rose k / star points
+  harmonics?: number; // fourier harmonics
+  points?: Array<[number, number]>; // bezier / catmull control points
   samples?: number;
+  expr?: string; // y(x) math expression for graph/function curves
+  xExpr?: string; // x(u) parametric math expression
+  yExpr?: string; // y(u) parametric math expression
+  xmin?: number;
+  xmax?: number;
+  ymin?: number;
+  ymax?: number;
+  axes?: boolean;
   progress?: number | string; // 0..1 reveal fraction (defaults to 1)
   stroke?: string;
+  strokeGradient?: string[]; // Multi-stop linear gradient across curve
   strokeWidth?: number;
   fill?: string;
+  fillGradient?: string[]; // Multi-stop vertical gradient fill under curve/closed path
   closed?: boolean;
   glow?: boolean;
   headDot?: boolean;
@@ -190,12 +258,36 @@ export interface StopMotionCurveSpec {
   rainbow?: boolean;
 }
 
+export interface StopMotionHitboxSpec {
+  shape?: 'rect' | 'circle';
+  w?: number;
+  h?: number;
+  r?: number;
+  show?: boolean;
+  color?: string;
+  collideColor?: string;
+  label?: string;
+}
+
+export interface StopMotionPhysicsSpec {
+  enabled?: boolean;
+  vx?: number;
+  vy?: number;
+  gravity?: number;
+  restitution?: number;
+  friction?: number;
+  mass?: number;
+  bounds?: [number, number, number, number];
+  isStatic?: boolean;
+}
+
 export interface StopMotionLayerSpec {
   id?: string;
   idLink?: string; // References a reusable group/family in scene.groups
   svg?: string;
   curve?: StopMotionCurveSpec;
   threeD?: StopMotionThreeDLayerSpec;
+  particles?: StopMotionParticlesSpec;
   pixelTexture?: StopMotionPixelTextureSpec;
   assetRef?: StopMotionAssetRefSpec;
   origin?: [number, number];
@@ -219,6 +311,8 @@ export interface StopMotionLayerSpec {
   shadow?: boolean | StopMotionShadowSpec;
   motion?: StopMotionMotionSpec;
   keyframes?: StopMotionKeyframe[];
+  hitbox?: StopMotionHitboxSpec;
+  physics?: StopMotionPhysicsSpec;
   repeat?: StopMotionRepeatSpec;
   axisDivision?: StopMotionAxisDivisionSpec;
   follow?: StopMotionFollowSpec;
@@ -232,7 +326,19 @@ export interface StopMotionStoryboardShot {
   label?: string;
   start: number; // normalized 0..1 or seconds if >1 and <= durationSec
   end: number;
-  cameraCut?: 'wide' | 'medium' | 'closeup' | 'dutch' | 'tracking' | 'overhead';
+  cameraCut?:
+    | 'wide'
+    | 'medium'
+    | 'closeup'
+    | 'dutch'
+    | 'tracking'
+    | 'overhead'
+    | 'zoomIn'
+    | 'zoomOut'
+    | 'panLeft'
+    | 'panRight'
+    | 'shake'
+    | 'tilt';
   cameraAngle?: {
     panX?: number | string;
     panY?: number | string;
@@ -245,8 +351,11 @@ export interface StopMotionStoryboardShot {
     subtitle?: string;
     badge?: string;
     showTimecode?: boolean;
+    fpsBadge?: boolean;
+    reticle?: boolean;
+    letterbox?: boolean;
   };
-  effect?: 'vignette' | 'chromatic' | 'bloom' | 'grain' | 'none';
+  effect?: 'vignette' | 'chromatic' | 'bloom' | 'grain' | 'sepia' | 'noir' | 'cyberpunk' | 'crt' | 'none';
 }
 
 export interface StopMotionStoryboardSpec {
@@ -272,6 +381,7 @@ export interface StopMotionSceneV2 {
   background?: string;
   loop?: boolean;
   pingPong?: boolean;
+  showHitboxes?: boolean;
   defs?: string;
   backdrop?: string;
   foreground?: string;
@@ -387,6 +497,123 @@ export const ENGINE_STUDIO_DEFS = `
     <stop offset="55%" stop-color="#000000" stop-opacity="0" />
     <stop offset="100%" stop-color="#000000" stop-opacity="0.52" />
   </radialGradient>
+
+  <!-- Extended Folio v4.2 Tactile Materials, Gradients & Filters -->
+  <radialGradient id="wetGlazeEmerald" cx="34%" cy="28%" r="66%" fx="30%" fy="22%">
+    <stop offset="0%" stop-color="#d1fae5" stop-opacity="0.96" />
+    <stop offset="28%" stop-color="#10b981" stop-opacity="0.92" />
+    <stop offset="72%" stop-color="#059669" stop-opacity="0.9" />
+    <stop offset="100%" stop-color="#064e3b" stop-opacity="0.96" />
+  </radialGradient>
+  <radialGradient id="wetGlazePurple" cx="34%" cy="28%" r="66%" fx="30%" fy="22%">
+    <stop offset="0%" stop-color="#f3e8ff" stop-opacity="0.96" />
+    <stop offset="28%" stop-color="#a855f7" stop-opacity="0.92" />
+    <stop offset="72%" stop-color="#7e22ce" stop-opacity="0.9" />
+    <stop offset="100%" stop-color="#3b0764" stop-opacity="0.96" />
+  </radialGradient>
+  <radialGradient id="wetGlazeCrimson" cx="34%" cy="28%" r="66%" fx="30%" fy="22%">
+    <stop offset="0%" stop-color="#fee2e2" stop-opacity="0.96" />
+    <stop offset="28%" stop-color="#ef4444" stop-opacity="0.92" />
+    <stop offset="72%" stop-color="#b91c1c" stop-opacity="0.9" />
+    <stop offset="100%" stop-color="#450a0a" stop-opacity="0.96" />
+  </radialGradient>
+  <radialGradient id="wetGlazeObsidian" cx="34%" cy="28%" r="66%" fx="30%" fy="22%">
+    <stop offset="0%" stop-color="#94a3b8" stop-opacity="0.92" />
+    <stop offset="28%" stop-color="#334155" stop-opacity="0.95" />
+    <stop offset="72%" stop-color="#0f172a" stop-opacity="0.98" />
+    <stop offset="100%" stop-color="#020617" stop-opacity="1" />
+  </radialGradient>
+  <radialGradient id="metallicCopper" cx="34%" cy="28%" r="70%" fx="28%" fy="22%">
+    <stop offset="0%" stop-color="#ffedd5" />
+    <stop offset="35%" stop-color="#ea580c" />
+    <stop offset="75%" stop-color="#9a3412" />
+    <stop offset="100%" stop-color="#431407" />
+  </radialGradient>
+  <radialGradient id="metallicChrome" cx="34%" cy="28%" r="70%" fx="28%" fy="22%">
+    <stop offset="0%" stop-color="#ffffff" />
+    <stop offset="30%" stop-color="#e2e8f0" />
+    <stop offset="65%" stop-color="#64748b" />
+    <stop offset="100%" stop-color="#0f172a" />
+  </radialGradient>
+  <radialGradient id="metallicRoseGold" cx="34%" cy="28%" r="70%" fx="28%" fy="22%">
+    <stop offset="0%" stop-color="#fff1f2" />
+    <stop offset="35%" stop-color="#fda4af" />
+    <stop offset="75%" stop-color="#be123c" />
+    <stop offset="100%" stop-color="#4c0519" />
+  </radialGradient>
+  <linearGradient id="iridescentHologram" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.88" />
+    <stop offset="33%" stop-color="#a855f7" stop-opacity="0.86" />
+    <stop offset="66%" stop-color="#ec4899" stop-opacity="0.88" />
+    <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0.9" />
+  </linearGradient>
+  <linearGradient id="sunsetSkyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%" stop-color="#1e1b4b" />
+    <stop offset="45%" stop-color="#7e22ce" />
+    <stop offset="78%" stop-color="#f43f5e" />
+    <stop offset="100%" stop-color="#fbbf24" />
+  </linearGradient>
+  <linearGradient id="cyberNightGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%" stop-color="#020617" />
+    <stop offset="55%" stop-color="#0f172a" />
+    <stop offset="100%" stop-color="#1e1b4b" />
+  </linearGradient>
+  <linearGradient id="auroraRibbonGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%" stop-color="#34d399" stop-opacity="0.85" />
+    <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.9" />
+    <stop offset="100%" stop-color="#a855f7" stop-opacity="0.85" />
+  </linearGradient>
+  <linearGradient id="lavaMagmaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%" stop-color="#fef08a" />
+    <stop offset="45%" stop-color="#f97316" />
+    <stop offset="100%" stop-color="#991b1b" />
+  </linearGradient>
+  <filter id="paperGrain" x="-5%" y="-5%" width="110%" height="110%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" result="grain" />
+    <feColorMatrix type="matrix" values="0 0 0 0 0.9  0 0 0 0 0.85  0 0 0 0 0.78  0 0 0 0.14 0" result="paperTint" />
+    <feComposite in="SourceGraphic" in2="paperTint" operator="over" />
+  </filter>
+  <filter id="claySculpt" x="-20%" y="-20%" width="140%" height="140%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur" />
+    <feSpecularLighting in="blur" surfaceScale="4" specularConstant="0.8" specularExponent="20" lighting-color="#ffffff" result="spec">
+      <fePointLight x="-80" y="-120" z="220" />
+    </feSpecularLighting>
+    <feComposite in="spec" in2="SourceAlpha" operator="in" result="specClip" />
+    <feComposite in="SourceGraphic" in2="specClip" operator="arithmetic" k1="0" k2="1" k3="0.55" k4="0" />
+  </filter>
+  <filter id="watercolorBleed" x="-20%" y="-20%" width="140%" height="140%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" result="turb" />
+    <feDisplacementMap in="SourceGraphic" in2="turb" scale="6" xChannelSelector="R" yChannelSelector="G" result="disp" />
+    <feGaussianBlur in="disp" stdDeviation="1.2" />
+  </filter>
+  <filter id="motionBlurX" x="-25%" y="-5%" width="150%" height="110%">
+    <feGaussianBlur stdDeviation="8 0" />
+  </filter>
+  <filter id="motionBlurY" x="-5%" y="-25%" width="110%" height="150%">
+    <feGaussianBlur stdDeviation="0 8" />
+  </filter>
+  <filter id="frostedGlass" x="-15%" y="-15%" width="130%" height="130%">
+    <feGaussianBlur stdDeviation="4" result="blur" />
+    <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" result="frost" />
+    <feComposite in="blur" in2="frost" operator="arithmetic" k1="0" k2="0.9" k3="0.1" k4="0" />
+  </filter>
+  <filter id="embossBevel" x="-10%" y="-10%" width="120%" height="120%">
+    <feConvolveMatrix order="3" kernelMatrix="-2 -1 0 -1 1 1 0 1 2" />
+  </filter>
+  <filter id="inkOutline" x="-15%" y="-15%" width="130%" height="130%">
+    <feMorphology operator="dilate" radius="2" in="SourceAlpha" result="thick" />
+    <feFlood flood-color="#0f172a" result="ink" />
+    <feComposite in="ink" in2="thick" operator="in" result="outline" />
+    <feMerge>
+      <feMergeNode in="outline" />
+      <feMergeNode in="SourceGraphic" />
+    </feMerge>
+  </filter>
+  <filter id="glitchSlice" x="-15%" y="-5%" width="130%" height="110%">
+    <feOffset in="SourceGraphic" dx="4" dy="0" result="r" />
+    <feOffset in="SourceGraphic" dx="-4" dy="1" result="c" />
+    <feBlend in="r" in2="c" mode="screen" />
+  </filter>
 </defs>
 `.trim();
 
@@ -474,73 +701,10 @@ function tokenizeExpr(expr: string): Token[] {
 }
 
 const MATH_FUNCS: Record<string, (...args: number[]) => number> = {
-  sin: (x) => Math.sin(x),
-  cos: (x) => Math.cos(x),
-  tan: (x) => Math.tan(x),
-  sinh: (x) => Math.sinh(Math.max(-10, Math.min(10, x))),
-  cosh: (x) => Math.cosh(Math.max(-10, Math.min(10, x))),
-  tanh: (x) => Math.tanh(x),
-  asin: (x) => Math.asin(Math.max(-1, Math.min(1, x))),
-  acos: (x) => Math.acos(Math.max(-1, Math.min(1, x))),
-  atan: (x) => Math.atan(x),
-  atan2: (y, x) => Math.atan2(y, x),
-  hypot: (x, y) => Math.hypot(x, y),
-  hyp: (x, y) => Math.hypot(x, y),
-  abs: (x) => Math.abs(x),
-  sqrt: (x) => Math.sqrt(Math.max(0, x)),
-  pow: (a, b) => Math.pow(a, b),
-  exp: (x) => Math.exp(Math.max(-30, Math.min(15, x))),
-  log: (x) => Math.log(Math.max(1e-9, x)),
-  min: (...args) => Math.min(...args),
-  max: (...args) => Math.max(...args),
-  round: (x) => Math.round(x),
-  floor: (x) => Math.floor(x),
-  ceil: (x) => Math.ceil(x),
-  sign: (x) => Math.sign(x),
-  deg2rad: (d) => (d * Math.PI) / 180,
-  rad2deg: (r) => (r * 180) / Math.PI,
-  step: (edge, x) => (x < edge ? 0 : 1),
-  clamp: (v, lo = 0, hi = 1) => Math.min(Math.max(v, lo), hi),
-  lerp: (a, b, t) => a + (b - a) * t,
-  invlerp: (a, b, v) => (b === a ? 0 : (v - a) / (b - a)),
-  mod: (a, b) => (b === 0 ? 0 : ((a % b) + b) % b),
-  fract: (x) => x - Math.floor(x),
-  smoothstep: (x, e0 = 0, e1 = 1) => {
-    const t = Math.min(Math.max((x - e0) / (e1 - e0 || 1), 0), 1);
-    return t * t * (3 - 2 * t);
-  },
-  easein: (t) => applyEasing(t, 'easeIn'),
-  easeout: (t) => applyEasing(t, 'easeOut'),
-  easeinout: (t) => applyEasing(t, 'easeInOut'),
-  easeinexpo: (t) => applyEasing(t, 'easeInExpo'),
-  easeoutexpo: (t) => applyEasing(t, 'easeOutExpo'),
-  easeinoutexpo: (t) => applyEasing(t, 'easeInOutExpo'),
-  backin: (t) => applyEasing(t, 'backIn'),
-  easeinback: (t) => applyEasing(t, 'easeInBack'),
-  backout: (t) => applyEasing(t, 'backOut'),
-  easeoutback: (t) => applyEasing(t, 'easeOutBack'),
-  backinout: (t) => applyEasing(t, 'backInOut'),
-  easeinoutback: (t) => applyEasing(t, 'easeInOutBack'),
-  easeinelastic: (t) => applyEasing(t, 'easeInElastic'),
-  easeoutelastic: (t) => applyEasing(t, 'easeOutElastic'),
-  easeoutbounce: (t) => applyEasing(t, 'bounce'),
-  pingpong: (t) => {
-    const m = ((t % 1) + 1) % 1;
-    return 1 - Math.abs(m * 2 - 1);
-  },
-  bounce: (t, count = 1) => Math.abs(Math.sin(t * Math.PI * count)),
-  wave: (t, min = -1, max = 1, freq = 1) =>
-    min + (max - min) * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 * freq)),
-  noise: (x) => {
-    const i = Math.floor(x);
-    const f = x - i;
-    const u = f * f * (3 - 2 * f);
-    const hash = (n: number) => {
-      const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
-      return s - Math.floor(s);
-    };
-    return hash(i) * (1 - u) + hash(i + 1) * u;
-  },
+  ...UNIFIED_MATH_FUNCS,
+  easein: (t) => applyUnifiedEasing(t, 'easeIn'),
+  easeout: (t) => applyUnifiedEasing(t, 'easeOut'),
+  easeinout: (t) => applyUnifiedEasing(t, 'easeInOut'),
 };
 
 export function evaluateMathExpression(
@@ -737,74 +901,7 @@ export function evaluateMathExpression(
 }
 
 export function applyEasing(rawT: number, ease: EasingName = 'linear'): number {
-  const t = Math.min(Math.max(rawT, 0), 1);
-  const c1 = 1.70158;
-  const c2 = c1 * 1.525;
-  const c3 = c1 + 1;
-
-  switch (ease) {
-    case 'in':
-    case 'easeIn':
-      return t * t * t;
-    case 'out':
-    case 'easeOut':
-      return 1 - Math.pow(1 - t, 3);
-    case 'inOut':
-    case 'easeInOut':
-      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    case 'easeInExpo':
-      return t === 0 ? 0 : Math.pow(2, 10 * t - 10);
-    case 'exponential':
-    case 'easeOutExpo':
-      return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-    case 'easeInOutExpo':
-      if (t === 0 || t === 1) return t;
-      return t < 0.5
-        ? Math.pow(2, 20 * t - 10) / 2
-        : (2 - Math.pow(2, -20 * t + 10)) / 2;
-    case 'backIn':
-    case 'easeInBack':
-      return c3 * t * t * t - c1 * t * t;
-    case 'back':
-    case 'backOut':
-    case 'easeOutBack':
-      return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-    case 'backInOut':
-    case 'easeInOutBack':
-      return t < 0.5
-        ? (Math.pow(2 * t, 2) * ((c2 + 1) * 2 * t - c2)) / 2
-        : (Math.pow(2 * t - 2, 2) * ((c2 + 1) * (t * 2 - 2) + c2) + 2) / 2;
-    case 'easeInElastic': {
-      if (t === 0 || t === 1) return t;
-      const c4 = (2 * Math.PI) / 3;
-      return -Math.pow(2, 10 * t - 10) * Math.sin((t * 10 - 10.75) * c4);
-    }
-    case 'elastic':
-    case 'easeOutElastic': {
-      if (t === 0 || t === 1) return t;
-      const c4 = (2 * Math.PI) / 3;
-      return Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
-    }
-    case 'bounce':
-    case 'easeOutBounce': {
-      const n1 = 7.5625;
-      const d1 = 2.75;
-      if (t < 1 / d1) return n1 * t * t;
-      if (t < 2 / d1) {
-        const u = t - 1.5 / d1;
-        return n1 * u * u + 0.75;
-      }
-      if (t < 2.5 / d1) {
-        const u = t - 2.25 / d1;
-        return n1 * u * u + 0.9375;
-      }
-      const u = t - 2.625 / d1;
-      return n1 * u * u + 0.984375;
-    }
-    case 'linear':
-    default:
-      return t;
-  }
+  return applyUnifiedEasing(rawT, ease);
 }
 
 // ---------------------------------------------------------------------------
@@ -1011,6 +1108,41 @@ function resolveLayerTransform(
       const sx = 1 / Math.max(0.35, sy);
       scaleX *= sx;
       scaleY *= sy;
+    }
+    if (m.shake !== undefined) {
+      const cfg = typeof m.shake === 'number' ? { ampX: m.shake, ampY: m.shake } : m.shake;
+      const ampX = cfg.ampX ?? 4;
+      const ampY = cfg.ampY ?? 4;
+      const freq = cfg.freq ?? 18;
+      const seed = cfg.seed ?? 1.7;
+      x += Math.sin(vars.t * Math.PI * 2 * freq + seed) * ampX;
+      y += Math.cos(vars.t * Math.PI * 2 * freq * 1.37 + seed) * ampY;
+    }
+    if (m.flicker) {
+      const fmin = m.flicker.min ?? 0.55;
+      const fmax = m.flicker.max ?? 1.0;
+      const freq = m.flicker.freq ?? 14;
+      const wave = 0.5 + 0.5 * Math.sin(vars.t * Math.PI * 2 * freq + Math.cos(vars.t * 31.4) * 1.4);
+      opacity *= fmin + (fmax - fmin) * wave;
+    }
+    if (m.spiral) {
+      const scx = m.spiral.cx ?? vars.cx;
+      const scy = m.spiral.cy ?? vars.cy;
+      const r0 = m.spiral.r0 ?? 12;
+      const r1 = m.spiral.r1 ?? 160;
+      const turns = m.spiral.turns ?? 3;
+      const phase = m.spiral.phase ?? 0;
+      const rNow = r0 + (r1 - r0) * vars.t;
+      const th = (vars.t * turns + phase) * Math.PI * 2;
+      x = scx + Math.cos(th) * rNow;
+      y = scy + Math.sin(th) * rNow;
+    }
+    if (m.bezierPath) {
+      const { p0, p1, p2, p3 } = m.bezierPath;
+      const u = Math.max(0, Math.min(1, vars.t));
+      const inv = 1 - u;
+      x = inv * inv * inv * p0[0] + 3 * inv * inv * u * p1[0] + 3 * inv * u * u * p2[0] + u * u * u * p3[0];
+      y = inv * inv * inv * p0[1] + 3 * inv * inv * u * p1[1] + 3 * inv * u * u * p2[1] + u * u * u * p3[1];
     }
   }
 
@@ -1233,6 +1365,188 @@ function generateMathCurvePoints(
     return pts;
   }
 
+  if (curve.type === 'graph' || curve.type === 'function' || curve.type === 'parametric') {
+    const rx = curve.rx ?? size * 0.8;
+    const ry = curve.ry ?? size * 0.45;
+    const samples = Math.min(600, Math.max(40, curve.samples ?? 180));
+    const xmin = curve.xmin ?? -Math.PI * 2;
+    const xmax = curve.xmax ?? Math.PI * 2;
+    const ymin = curve.ymin ?? -1.5;
+    const ymax = curve.ymax ?? 1.5;
+    const ySpan = Math.max(1e-4, ymax - ymin);
+    const xSpan = Math.max(1e-4, xmax - xmin);
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const u = s / samples;
+      const xVal = xmin + u * xSpan;
+      if (curve.type === 'parametric') {
+        const px = evaluateMathExpression(curve.xExpr || 'cos(u * TAU)', { ...vars, x: xVal, u, s });
+        const py = evaluateMathExpression(curve.yExpr || 'sin(u * TAU)', { ...vars, x: xVal, u, s });
+        pts.push([cx + px * (rx * 0.5), cy - py * (ry * 0.5)]);
+      } else {
+        const yVal = evaluateMathExpression(curve.expr || 'sin(x + t * TAU)', { ...vars, x: xVal, u, s });
+        const normX = (xVal - xmin) / xSpan; // 0..1
+        const normY = (yVal - ymin) / ySpan; // 0..1
+        pts.push([cx - rx * 0.5 + normX * rx, cy + ry * 0.5 - normY * ry]);
+      }
+    }
+    return pts;
+  }
+
+  if (curve.type === 'butterfly') {
+    const scale = (curve.rx ?? size * 0.13);
+    const turns = curve.turns ?? 2;
+    const samples = Math.min(720, Math.max(120, curve.samples ?? 360));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const th = (s / samples) * Math.PI * 2 * turns;
+      const r = Math.exp(Math.cos(th)) - 2 * Math.cos(4 * th) - Math.pow(Math.sin(th / 12), 5);
+      pts.push([cx + Math.sin(th) * r * scale, cy - Math.cos(th) * r * scale]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'cardioid') {
+    const a = curve.rx ?? size * 0.22;
+    const samples = Math.min(480, Math.max(80, curve.samples ?? 200));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const th = (s / samples) * Math.PI * 2;
+      const r = a * (1 - Math.cos(th));
+      pts.push([cx + r * Math.cos(th) + a * 0.5, cy + r * Math.sin(th)]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'lemniscate') {
+    const a = curve.rx ?? size * 0.45;
+    const samples = Math.min(480, Math.max(80, curve.samples ?? 200));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const th = (s / samples) * Math.PI * 2;
+      const denom = 1 + Math.sin(th) * Math.sin(th);
+      pts.push([cx + (a * Math.cos(th)) / denom, cy + (a * Math.sin(th) * Math.cos(th)) / denom]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'astroid') {
+    const a = curve.rx ?? size * 0.45;
+    const samples = Math.min(400, Math.max(60, curve.samples ?? 180));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const th = (s / samples) * Math.PI * 2;
+      pts.push([cx + a * Math.pow(Math.cos(th), 3), cy + a * Math.pow(Math.sin(th), 3)]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'hypocycloid' || curve.type === 'epicycloid') {
+    const R = curve.a ?? size * 0.32;
+    const r = curve.b ?? size * 0.08;
+    const turns = curve.turns ?? 3;
+    const samples = Math.min(720, Math.max(100, curve.samples ?? 320));
+    const pts: Array<[number, number]> = [];
+    const isEpi = curve.type === 'epicycloid';
+    for (let s = 0; s <= samples; s += 1) {
+      const th = (s / samples) * Math.PI * 2 * turns;
+      const x = isEpi
+        ? (R + r) * Math.cos(th) - r * Math.cos(((R + r) / (r || 1)) * th)
+        : (R - r) * Math.cos(th) + r * Math.cos(((R - r) / (r || 1)) * th);
+      const y = isEpi
+        ? (R + r) * Math.sin(th) - r * Math.sin(((R + r) / (r || 1)) * th)
+        : (R - r) * Math.sin(th) - r * Math.sin(((R - r) / (r || 1)) * th);
+      pts.push([cx + x, cy + y]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'fermat' || curve.type === 'archimedes') {
+    const maxR = curve.rx ?? size * 0.45;
+    const turns = curve.turns ?? 4;
+    const samples = Math.min(500, Math.max(80, curve.samples ?? 240));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const u = s / samples;
+      const th = u * Math.PI * 2 * turns;
+      const r = curve.type === 'fermat' ? maxR * Math.sqrt(u) : maxR * u;
+      pts.push([cx + r * Math.cos(th), cy + r * Math.sin(th)]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'phyllotaxis') {
+    const count = Math.min(360, Math.max(30, curve.samples ?? 120));
+    const maxR = curve.rx ?? size * 0.46;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s < count; s += 1) {
+      const r = maxR * Math.sqrt((s + 1) / count);
+      const th = s * golden + vars.t * Math.PI * 2;
+      pts.push([cx + r * Math.cos(th), cy + r * Math.sin(th)]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'sinewave' || curve.type === 'fourier') {
+    const rx = curve.rx ?? size * 0.85;
+    const ry = curve.ry ?? size * 0.35;
+    const harmonics = Math.max(1, Math.min(12, Math.round(curve.harmonics ?? (curve.type === 'fourier' ? 5 : 1))));
+    const freq = curve.a ?? 2;
+    const samples = Math.min(400, Math.max(60, curve.samples ?? 160));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const u = s / samples;
+      let ySum = 0;
+      for (let k = 1; k <= harmonics; k += 1) {
+        const n = 2 * k - 1;
+        ySum += Math.sin(n * (u * Math.PI * 2 * freq + vars.t * Math.PI * 2)) / n;
+      }
+      pts.push([cx - rx * 0.5 + u * rx, cy - ySum * ry]);
+    }
+    return pts;
+  }
+
+  if (curve.type === 'bezier' && Array.isArray(curve.points) && curve.points.length >= 3) {
+    const p = curve.points;
+    const samples = Math.min(200, Math.max(24, curve.samples ?? 80));
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= samples; s += 1) {
+      const u = s / samples;
+      const inv = 1 - u;
+      if (p.length >= 4) {
+        pts.push([
+          inv * inv * inv * p[0][0] + 3 * inv * inv * u * p[1][0] + 3 * inv * u * u * p[2][0] + u * u * u * p[3][0],
+          inv * inv * inv * p[0][1] + 3 * inv * inv * u * p[1][1] + 3 * inv * u * u * p[2][1] + u * u * u * p[3][1],
+        ]);
+      } else {
+        pts.push([
+          inv * inv * p[0][0] + 2 * inv * u * p[1][0] + u * u * p[2][0],
+          inv * inv * p[0][1] + 2 * inv * u * p[1][1] + u * u * p[2][1],
+        ]);
+      }
+    }
+    return pts;
+  }
+
+  if (curve.type === 'catmull' && Array.isArray(curve.points) && curve.points.length >= 2) {
+    return curve.points;
+  }
+
+  if (curve.type === 'starpolygon') {
+    const numPts = Math.max(3, Math.round(curve.petals ?? 5));
+    const rOuter = curve.rx ?? size * 0.45;
+    const rInner = curve.ry ?? rOuter * 0.44;
+    const rot = (curve.delta ?? 0) + vars.t * Math.PI * 2;
+    const pts: Array<[number, number]> = [];
+    for (let s = 0; s <= numPts * 2; s += 1) {
+      const r = s % 2 === 0 ? rOuter : rInner;
+      const th = (s / (numPts * 2)) * Math.PI * 2 - Math.PI / 2 + rot;
+      pts.push([cx + r * Math.cos(th), cy + r * Math.sin(th)]);
+    }
+    return pts;
+  }
+
   const maxR = curve.rx ?? size * 0.48;
   const turns = curve.turns ?? 4.5;
   const samples = Math.min(500, Math.max(60, curve.samples ?? 200));
@@ -1271,12 +1585,56 @@ function renderCurveSvg(
   );
   if (curve.closed && progress >= 0.999) dParts.push('Z');
 
-  const stroke = curve.stroke || '#38bdf8';
+  let defsSvg = '';
+  let stroke = curve.stroke || '#38bdf8';
+  let fill = curve.fill || 'none';
+  const uid = `cg_${Math.abs(Math.round((curve.cx ?? 0) * 13 + (curve.cy ?? 0) * 7 + (curve.size ?? 240)))}`;
+
+  if (Array.isArray(curve.strokeGradient) && curve.strokeGradient.length >= 2) {
+    const gradId = `${uid}_s`;
+    const stops = curve.strokeGradient
+      .map((c, idx) => `<stop offset="${Math.round((idx / (curve.strokeGradient!.length - 1)) * 100)}%" stop-color="${c}" />`)
+      .join('');
+    defsSvg += `<linearGradient id="${gradId}" x1="0%" y1="0%" x2="100%" y2="0%">${stops}</linearGradient>`;
+    stroke = `url(#${gradId})`;
+  }
+
+  if (Array.isArray(curve.fillGradient) && curve.fillGradient.length >= 2) {
+    const fillId = `${uid}_f`;
+    const stops = curve.fillGradient
+      .map((c, idx) => `<stop offset="${Math.round((idx / (curve.fillGradient!.length - 1)) * 100)}%" stop-color="${c}" stop-opacity="${idx === curve.fillGradient!.length - 1 ? 0.05 : 0.45}" />`)
+      .join('');
+    defsSvg += `<linearGradient id="${fillId}" x1="0%" y1="0%" x2="0%" y2="100%">${stops}</linearGradient>`;
+    fill = `url(#${fillId})`;
+  }
+
+  let axesSvg = '';
+  if ((curve.type === 'graph' || curve.type === 'function') && curve.axes !== false) {
+    const cx = curve.cx ?? 0;
+    const cy = curve.cy ?? 0;
+    const size = curve.size ?? 240;
+    const rx = curve.rx ?? size * 0.8;
+    const ry = curve.ry ?? size * 0.45;
+    axesSvg = `<line x1="${(cx - rx * 0.5).toFixed(1)}" y1="${cy.toFixed(1)}" x2="${(cx + rx * 0.5).toFixed(1)}" y2="${cy.toFixed(1)}" stroke="rgba(148,163,184,0.35)" stroke-width="1.2" stroke-dasharray="4 4" /><line x1="${cx.toFixed(1)}" y1="${(cy - ry * 0.5).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${(cy + ry * 0.5).toFixed(1)}" stroke="rgba(148,163,184,0.35)" stroke-width="1.2" stroke-dasharray="4 4" />`;
+  }
+
   const strokeWidth = curve.strokeWidth ?? 3;
-  const fill = curve.fill || 'none';
   const filterAttr = curve.glow ? ' filter="url(#softGlow)"' : '';
 
-  let markup = `<path d="${dParts.join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${filterAttr} />`;
+  let markup = defsSvg ? `<defs>${defsSvg}</defs>` : '';
+  markup += axesSvg;
+  if (fill !== 'none' && (curve.type === 'graph' || curve.type === 'function')) {
+    const cx = curve.cx ?? 0;
+    const cy = curve.cy ?? 0;
+    const rx = curve.rx ?? (curve.size ?? 240) * 0.8;
+    const ry = curve.ry ?? (curve.size ?? 240) * 0.45;
+    const baseY = cy + ry * 0.5;
+    const [fx] = visiblePts[0];
+    const [lx] = visiblePts[visiblePts.length - 1];
+    markup += `<path d="${dParts.join(' ')} L${lx.toFixed(2)},${baseY.toFixed(2)} L${fx.toFixed(2)},${baseY.toFixed(2)} Z" fill="${fill}" stroke="none" />`;
+    fill = 'none';
+  }
+  markup += `<path d="${dParts.join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${filterAttr} />`;
 
   if (curve.headDot !== false && progress < 1) {
     const [hx, hy] = visiblePts[visiblePts.length - 1];
@@ -1380,7 +1738,52 @@ function renderThreeDPrimitiveSvg(
     ].join('');
   }
 
-  // Faceted meshes: cube, pyramid, crystal
+  if (spec.shape === 'ring') {
+    const R = size * 0.48;
+    const tilt = Math.max(0.25, Math.abs(Math.cos(rx)));
+    return `<ellipse cx="0" cy="0" rx="${R.toFixed(2)}" ry="${(R * tilt).toFixed(2)}" fill="none" stroke="${baseColor}" stroke-width="${(size * 0.12).toFixed(2)}" /><ellipse cx="0" cy="-1.5" rx="${(R * 0.94).toFixed(2)}" ry="${(R * tilt * 0.94).toFixed(2)}" fill="none" stroke="${rimColor}" stroke-width="1.4" opacity="0.7" />`;
+  }
+
+  if (spec.shape === 'cone') {
+    const r = size * 0.42;
+    const h = size * 0.85;
+    const capRy = Math.max(6, Math.abs(Math.sin(rx)) * r * 0.45 + 5);
+    return [
+      `<polygon points="0,${(-h / 2).toFixed(2)} ${(-r).toFixed(2)},${(h / 2).toFixed(2)} ${r.toFixed(2)},${(h / 2).toFixed(2)}" fill="${adjustHexShade(baseColor, 0.85)}" stroke="${rimColor}" stroke-width="1" />`,
+      `<ellipse cx="0" cy="${(h / 2).toFixed(2)}" rx="${r.toFixed(2)}" ry="${capRy.toFixed(2)}" fill="${adjustHexShade(baseColor, 0.65)}" />`,
+      `<polygon points="0,${(-h / 2).toFixed(2)} ${(-r * 0.45).toFixed(2)},${(h / 2).toFixed(2)} 0,${(h / 2).toFixed(2)}" fill="#ffffff" opacity="${(0.15 + reflection * 0.35).toFixed(2)}" />`,
+    ].join('');
+  }
+
+  if (spec.shape === 'capsule') {
+    const r = size * 0.28;
+    const h = size * 0.78;
+    return [
+      `<rect x="${(-r).toFixed(2)}" y="${(-h / 2).toFixed(2)}" width="${(r * 2).toFixed(2)}" height="${h.toFixed(2)}" rx="${r.toFixed(2)}" fill="${adjustHexShade(baseColor, 0.9)}" stroke="${rimColor}" stroke-width="1.2" />`,
+      `<rect x="${(-r * 0.55).toFixed(2)}" y="${(-h / 2 + r * 0.3).toFixed(2)}" width="${(r * 0.35).toFixed(2)}" height="${(h - r * 0.6).toFixed(2)}" rx="${(r * 0.17).toFixed(2)}" fill="#ffffff" opacity="${(0.25 + reflection * 0.4).toFixed(2)}" />`,
+    ].join('');
+  }
+
+  if (spec.shape === 'gear') {
+    const teeth = Math.max(6, Math.min(24, Math.round(spec.teeth ?? 10)));
+    const outerR = size * 0.48;
+    const innerR = size * 0.36;
+    const holeR = size * 0.14;
+    const pts: string[] = [];
+    for (let i = 0; i < teeth * 2; i += 1) {
+      const a0 = (i / (teeth * 2)) * Math.PI * 2 + rz;
+      const a1 = ((i + 0.7) / (teeth * 2)) * Math.PI * 2 + rz;
+      const rad = i % 2 === 0 ? outerR : innerR;
+      pts.push(`${(Math.cos(a0) * rad).toFixed(1)},${(Math.sin(a0) * rad).toFixed(1)}`);
+      pts.push(`${(Math.cos(a1) * rad).toFixed(1)},${(Math.sin(a1) * rad).toFixed(1)}`);
+    }
+    return [
+      `<polygon points="${pts.join(' ')}" fill="${adjustHexShade(baseColor, 0.85)}" stroke="${rimColor}" stroke-width="1.5" stroke-linejoin="round" />`,
+      `<circle cx="0" cy="0" r="${holeR.toFixed(1)}" fill="${adjustHexShade(baseColor, 0.38)}" stroke="${rimColor}" stroke-width="1.2" />`,
+    ].join('');
+  }
+
+  // Faceted meshes: cube, pyramid, crystal, octahedron, icosahedron, prism
   const h = size * 0.5;
   const vertices: Array<[number, number, number]> =
     spec.shape === 'pyramid'
@@ -1391,14 +1794,23 @@ function renderThreeDPrimitiveSvg(
           [h, h * 0.65, h],
           [-h, h * 0.65, h],
         ]
-      : spec.shape === 'crystal'
+      : spec.shape === 'prism'
       ? [
-          [0, -h * 1.35, 0],
-          [-h * 0.65, 0, -h * 0.65],
-          [h * 0.65, 0, -h * 0.65],
-          [h * 0.65, 0, h * 0.65],
-          [-h * 0.65, 0, h * 0.65],
-          [0, h * 1.35, 0],
+          [0, -h * 0.9, -h],
+          [h * 0.9, h * 0.7, -h],
+          [-h * 0.9, h * 0.7, -h],
+          [0, -h * 0.9, h],
+          [h * 0.9, h * 0.7, h],
+          [-h * 0.9, h * 0.7, h],
+        ]
+      : spec.shape === 'crystal' || spec.shape === 'octahedron' || spec.shape === 'icosahedron'
+      ? [
+          [0, -h * (spec.shape === 'crystal' ? 1.35 : 1.05), 0],
+          [-h * 0.75, 0, -h * 0.75],
+          [h * 0.75, 0, -h * 0.75],
+          [h * 0.75, 0, h * 0.75],
+          [-h * 0.75, 0, h * 0.75],
+          [0, h * (spec.shape === 'crystal' ? 1.35 : 1.05), 0],
         ]
       : [
           [-h, -h, -h],
@@ -1420,7 +1832,15 @@ function renderThreeDPrimitiveSvg(
           { idx: [0, 4, 1], shade: 1.02 },
           { idx: [1, 4, 3, 2], shade: 0.58 },
         ]
-      : spec.shape === 'crystal'
+      : spec.shape === 'prism'
+      ? [
+          { idx: [0, 1, 2], shade: 1.15 },
+          { idx: [3, 5, 4], shade: 0.85 },
+          { idx: [0, 3, 4, 1], shade: 1.05 },
+          { idx: [1, 4, 5, 2], shade: 0.65 },
+          { idx: [2, 5, 3, 0], shade: 0.9 },
+        ]
+      : spec.shape === 'crystal' || spec.shape === 'octahedron' || spec.shape === 'icosahedron'
       ? [
           { idx: [0, 1, 2], shade: 1.25 },
           { idx: [0, 2, 3], shade: 0.98 },
@@ -1459,6 +1879,54 @@ function renderThreeDPrimitiveSvg(
       return `<polygon points="${pts}" fill="${fill}" fill-opacity="${opacity.toFixed(2)}" stroke="${rimColor}" stroke-opacity="${(0.35 + reflection * 0.5).toFixed(2)}" stroke-width="1.3" stroke-linejoin="round" />`;
     })
     .join('');
+}
+
+function renderParticlesSvg(
+  spec: StopMotionParticlesSpec,
+  vars: Record<string, number>
+): string {
+  const count = Math.max(4, Math.min(180, Math.round(spec.count ?? 28)));
+  const colors = Array.isArray(spec.colors) && spec.colors.length > 0 ? spec.colors : ['#38bdf8', '#f472b6', '#fbbf24'];
+  const cx = spec.cx ?? 0;
+  const cy = spec.cy ?? 0;
+  const spreadX = spec.spreadX ?? 160;
+  const spreadY = spec.spreadY ?? 120;
+  const speed = spec.speed ?? 1;
+  const gravity = spec.gravity ?? 0;
+  const baseSize = spec.size ?? 4;
+  const seed = spec.seed ?? 7.3;
+  const filterAttr = spec.glow ? ' filter="url(#softGlow)"' : '';
+  const items: string[] = [];
+
+  for (let p = 0; p < count; p += 1) {
+    const hx = Math.sin((p + 1) * 19.31 + seed * 7.1) * 43758.5453;
+    const hy = Math.sin((p + 1) * 73.19 + seed * 11.7) * 29431.719;
+    const rx = (hx - Math.floor(hx)) * 2 - 1;
+    const ry = (hy - Math.floor(hy)) * 2 - 1;
+    const life = (vars.t * speed + (p / count)) % 1;
+    const px = cx + rx * spreadX * (spec.shape === 'smoke' || spec.shape === 'bubble' ? 0.4 + life * 0.8 : 1);
+    const py =
+      spec.shape === 'snow'
+        ? cy - spreadY * 0.5 + life * spreadY
+        : spec.shape === 'smoke' || spec.shape === 'bubble'
+        ? cy - life * spreadY
+        : cy + ry * spreadY * 0.5 + gravity * life * life * 0.4;
+    const col = colors[p % colors.length];
+    const op = Math.max(0.1, Math.sin(life * Math.PI) * 0.9).toFixed(2);
+    const sz = Math.max(1.2, baseSize * (0.65 + (p % 4) * 0.25));
+
+    if (spec.shape === 'star') {
+      items.push(`<path d="M ${px.toFixed(1)} ${(py - sz).toFixed(1)} L ${(px + sz * 0.28).toFixed(1)} ${(py - sz * 0.28).toFixed(1)} L ${(px + sz).toFixed(1)} ${py.toFixed(1)} L ${(px + sz * 0.28).toFixed(1)} ${(py + sz * 0.28).toFixed(1)} L ${px.toFixed(1)} ${(py + sz).toFixed(1)} L ${(px - sz * 0.28).toFixed(1)} ${(py + sz * 0.28).toFixed(1)} L ${(px - sz).toFixed(1)} ${py.toFixed(1)} L ${(px - sz * 0.28).toFixed(1)} ${(py - sz * 0.28).toFixed(1)} Z" fill="${col}" opacity="${op}" />`);
+    } else if (spec.shape === 'confetti' || spec.shape === 'spark') {
+      const rot = (life * 360 + p * 37) % 360;
+      items.push(`<rect x="${(px - sz * 0.8).toFixed(1)}" y="${(py - sz * 0.35).toFixed(1)}" width="${(sz * 1.6).toFixed(1)}" height="${(sz * 0.7).toFixed(1)}" rx="1" transform="rotate(${rot.toFixed(1)} ${px.toFixed(1)} ${py.toFixed(1)})" fill="${col}" opacity="${op}" />`);
+    } else if (spec.shape === 'bubble') {
+      items.push(`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${sz.toFixed(1)}" fill="none" stroke="${col}" stroke-width="1.3" opacity="${op}" />`);
+    } else {
+      items.push(`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${sz.toFixed(1)}" fill="${col}" opacity="${op}" />`);
+    }
+  }
+  return `<g${filterAttr}>${items.join('')}</g>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1546,6 +2014,283 @@ function expandLayerWithGroups(
   };
 }
 
+interface SimulatedLayerFrame {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  hit: boolean;
+}
+
+const physicsTimelineCache = new WeakMap<
+  StopMotionSceneV2,
+  Map<string, Map<string, SimulatedLayerFrame[]>>
+>();
+
+function getSimulatedPhysicsMap(
+  scene: StopMotionSceneV2,
+  totalFrames: number,
+  fps: number,
+  width: number,
+  height: number
+): Map<string, SimulatedLayerFrame[]> | null {
+  const hasAny = scene.layers.some((l) => Boolean(l.physics || l.hitbox));
+  if (!hasAny) return null;
+
+  const cacheKey = `${totalFrames}:${fps}:${width}:${height}`;
+  let sceneCache = physicsTimelineCache.get(scene);
+  if (!sceneCache) {
+    sceneCache = new Map();
+    physicsTimelineCache.set(scene, sceneCache);
+  }
+  const cached = sceneCache.get(cacheKey);
+  if (cached) return cached;
+
+  const dt = 1 / Math.max(1, fps);
+  const durationSec =
+    typeof scene.durationSec === 'number' && scene.durationSec > 0
+      ? Math.min(600, scene.durationSec)
+      : Math.max(0.25, totalFrames / Math.max(1, fps));
+  const loop = scene.loop !== false;
+
+  interface BodyState {
+    key: string;
+    layer: StopMotionLayerSpec;
+    hasPhysics: boolean;
+    isStatic: boolean;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    gravity: number;
+    restitution: number;
+    friction: number;
+    mass: number;
+    bounds: [number, number, number, number];
+    shape: 'rect' | 'circle';
+    hw: number;
+    hh: number;
+    r: number;
+    hitDecay: number;
+  }
+
+  const initVars: Record<string, number> = {
+    i: 0,
+    n: totalFrames,
+    frameCount: totalFrames,
+    fps,
+    dur: durationSec,
+    time: 0,
+    t: 0,
+    u: 0,
+    deg: 0,
+    rad: 0,
+    angle: 0,
+    w: width,
+    h: height,
+    cx: width / 2,
+    cy: height / 2,
+    PI: Math.PI,
+    TAU: Math.PI * 2,
+    E: Math.E,
+  };
+
+  const bodies: BodyState[] = [];
+  const resultMap = new Map<string, SimulatedLayerFrame[]>();
+
+  scene.layers.forEach((rawLayer, idx) => {
+    const layer = expandLayerWithGroups(rawLayer, scene.groups);
+    if (!layer.physics && !layer.hitbox) return;
+    const key = layer.id || `__layer_${idx}`;
+    const tf0 = resolveLayerTransform(layer, initVars, totalFrames);
+    const hb = layer.hitbox;
+    const phys = layer.physics;
+    const shape: 'rect' | 'circle' = hb?.shape || (hb?.r !== undefined ? 'circle' : 'rect');
+    const r = Math.max(6, hb?.r ?? Math.max(hb?.w ?? 48, hb?.h ?? 48) * 0.5);
+    const hw = Math.max(4, (hb?.w ?? r * 2) * 0.5);
+    const hh = Math.max(4, (hb?.h ?? r * 2) * 0.5);
+
+    bodies.push({
+      key,
+      layer,
+      hasPhysics: Boolean(phys && phys.enabled !== false),
+      isStatic: Boolean(phys?.isStatic),
+      x: tf0.x,
+      y: tf0.y,
+      vx: phys?.vx ?? 0,
+      vy: phys?.vy ?? 0,
+      gravity: phys?.gravity ?? 520,
+      restitution: Math.max(0.05, Math.min(1.02, phys?.restitution ?? 0.82)),
+      friction: Math.max(0.85, Math.min(1, phys?.friction ?? 0.996)),
+      mass: Math.max(0.1, phys?.mass ?? 1),
+      bounds: phys?.bounds || [18, 18, width - 18, height - 24],
+      shape,
+      hw,
+      hh,
+      r,
+      hitDecay: 0,
+    });
+    resultMap.set(key, []);
+  });
+
+  for (let f = 0; f < totalFrames; f += 1) {
+    const t = loop ? f / Math.max(1, totalFrames) : totalFrames > 1 ? f / (totalFrames - 1) : 0;
+    const frameVars: Record<string, number> = {
+      ...initVars,
+      i: f,
+      time: t * durationSec,
+      t,
+      u: totalFrames > 1 ? f / (totalFrames - 1) : 0,
+      deg: t * 360,
+      rad: t * Math.PI * 2,
+      angle: t * Math.PI * 2,
+    };
+
+    if (f > 0) {
+      for (const b of bodies) {
+        if (b.hitDecay > 0) b.hitDecay -= 1;
+        if (b.hasPhysics && !b.isStatic) {
+          b.vy += b.gravity * dt;
+          b.x += b.vx * dt;
+          b.y += b.vy * dt;
+
+          const [minX, minY, maxX, maxY] = b.bounds;
+          const padX = b.shape === 'circle' ? b.r : b.hw;
+          const padY = b.shape === 'circle' ? b.r : b.hh;
+
+          if (b.y + padY > maxY) {
+            b.y = maxY - padY;
+            if (Math.abs(b.vy) > 16) {
+              b.vy = -Math.abs(b.vy) * b.restitution;
+              b.hitDecay = 4;
+            } else {
+              b.vy = 0;
+            }
+            b.vx *= b.friction;
+          } else if (b.y - padY < minY) {
+            b.y = minY + padY;
+            b.vy = Math.abs(b.vy) * b.restitution;
+            b.hitDecay = 4;
+          }
+
+          if (b.x + padX > maxX) {
+            b.x = maxX - padX;
+            b.vx = -Math.abs(b.vx) * b.restitution;
+            b.hitDecay = 4;
+          } else if (b.x - padX < minX) {
+            b.x = minX + padX;
+            b.vx = Math.abs(b.vx) * b.restitution;
+            b.hitDecay = 4;
+          }
+        } else {
+          const tf = resolveLayerTransform(b.layer, frameVars, totalFrames);
+          b.vx = (tf.x - b.x) / dt;
+          b.vy = (tf.y - b.y) / dt;
+          b.x = tf.x;
+          b.y = tf.y;
+        }
+      }
+
+      // Pairwise collision detection & impulse
+      for (let i = 0; i < bodies.length; i += 1) {
+        for (let j = i + 1; j < bodies.length; j += 1) {
+          const a = bodies[i];
+          const b = bodies[j];
+          let hit = false;
+          let nx = 0;
+          let ny = -1;
+          let overlap = 0;
+
+          if (a.shape === 'circle' && b.shape === 'circle') {
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const d = Math.hypot(dx, dy);
+            const minD = a.r + b.r;
+            if (d < minD) {
+              hit = true;
+              overlap = minD - d;
+              if (d > 1e-4) {
+                nx = dx / d;
+                ny = dy / d;
+              }
+            }
+          } else {
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const ox = a.hw + b.hw - Math.abs(dx);
+            const oy = a.hh + b.hh - Math.abs(dy);
+            if (ox > 0 && oy > 0) {
+              hit = true;
+              if (ox < oy) {
+                overlap = ox;
+                nx = dx >= 0 ? 1 : -1;
+                ny = 0;
+              } else {
+                overlap = oy;
+                nx = 0;
+                ny = dy >= 0 ? 1 : -1;
+              }
+            }
+          }
+
+          if (hit) {
+            a.hitDecay = 5;
+            b.hitDecay = 5;
+            const aDyn = a.hasPhysics && !a.isStatic;
+            const bDyn = b.hasPhysics && !b.isStatic;
+            if (aDyn && bDyn) {
+              a.x -= nx * overlap * 0.5;
+              a.y -= ny * overlap * 0.5;
+              b.x += nx * overlap * 0.5;
+              b.y += ny * overlap * 0.5;
+              const rvx = b.vx - a.vx;
+              const rvy = b.vy - a.vy;
+              const velAlong = rvx * nx + rvy * ny;
+              if (velAlong < 0) {
+                const e = Math.min(a.restitution, b.restitution);
+                const impulse = (-(1 + e) * velAlong) / (1 / a.mass + 1 / b.mass);
+                a.vx -= (impulse / a.mass) * nx;
+                a.vy -= (impulse / a.mass) * ny;
+                b.vx += (impulse / b.mass) * nx;
+                b.vy += (impulse / b.mass) * ny;
+              }
+            } else if (aDyn) {
+              a.x -= nx * overlap;
+              a.y -= ny * overlap;
+              const velAlong = a.vx * nx + a.vy * ny;
+              if (velAlong > 0) {
+                a.vx -= (1 + a.restitution) * velAlong * nx;
+                a.vy -= (1 + a.restitution) * velAlong * ny;
+              }
+            } else if (bDyn) {
+              b.x += nx * overlap;
+              b.y += ny * overlap;
+              const velAlong = b.vx * nx + b.vy * ny;
+              if (velAlong < 0) {
+                b.vx -= (1 + b.restitution) * velAlong * nx;
+                b.vy -= (1 + b.restitution) * velAlong * ny;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (const b of bodies) {
+      resultMap.get(b.key)!.push({
+        x: b.x,
+        y: b.y,
+        vx: b.vx,
+        vy: b.vy,
+        hit: b.hitDecay > 0,
+      });
+    }
+  }
+
+  sceneCache.set(cacheKey, resultMap);
+  return resultMap;
+}
+
 function renderLayer(
   rawLayer: StopMotionLayerSpec,
   vars: Record<string, number>,
@@ -1555,13 +2300,23 @@ function renderLayer(
   groups: Record<string, StopMotionLayerSpec | StopMotionLayerSpec[]> | undefined,
   sceneLighting: StopMotionThreeLightingSpec | undefined,
   transformMap: Map<string, ResolvedTransform>,
-  camOffset: { x: number; y: number }
+  camOffset: { x: number; y: number },
+  physicsMap?: Map<string, SimulatedLayerFrame[]> | null,
+  layerIndex = 0,
+  showSceneHitboxes = false
 ): string {
   const layer = expandLayerWithGroups(rawLayer, groups);
   if (layer.visibleFrom !== undefined && vars.t < layer.visibleFrom) return '';
   if (layer.visibleTo !== undefined && vars.t > layer.visibleTo) return '';
 
   let tf = resolveLayerTransform(layer, vars, frameCount);
+
+  const simKey = layer.id || `__layer_${layerIndex}`;
+  const simFrames = physicsMap?.get(simKey);
+  const simState = simFrames ? simFrames[Math.min(simFrames.length - 1, Math.max(0, Math.round(vars.i)))] : undefined;
+  if (simState && layer.physics && layer.physics.enabled !== false) {
+    tf = { ...tf, x: simState.x, y: simState.y };
+  }
 
   // Follow another layer's evaluated or lagged transform
   if (layer.follow?.targetId) {
@@ -1600,6 +2355,9 @@ function renderLayer(
   }
   if (layer.threeD) {
     innerSvg += renderThreeDPrimitiveSvg(layer.threeD, vars, sceneLighting);
+  }
+  if (layer.particles) {
+    innerSvg += renderParticlesSvg(layer.particles, vars);
   }
   if (layer.pixelTexture) {
     innerSvg += renderPixelTextureSvg(layer.pixelTexture);
@@ -1656,7 +2414,7 @@ function renderLayer(
 
   const childrenSvg = Array.isArray(layer.children)
     ? layer.children
-        .map((child) =>
+        .map((child, cIdx) =>
           renderLayer(
             child,
             vars,
@@ -1666,7 +2424,10 @@ function renderLayer(
             groups,
             sceneLighting,
             transformMap,
-            camOffset
+            camOffset,
+            physicsMap,
+            cIdx,
+            showSceneHitboxes
           )
         )
         .filter(Boolean)
@@ -1724,6 +2485,30 @@ function renderLayer(
     }
   }
 
+  // Hitbox collision gizmo overlay (world space around tf.x, tf.y)
+  let hitboxSvg = '';
+  if ((layer.hitbox || layer.physics) && (showSceneHitboxes || layer.hitbox?.show !== false)) {
+    const hb = layer.hitbox;
+    const isHit = Boolean(simState?.hit);
+    const col = isHit ? (hb?.collideColor || '#f43f5e') : (hb?.color || '#22d3ee');
+    const shape = hb?.shape || (hb?.r !== undefined ? 'circle' : 'rect');
+    const r = Math.max(6, hb?.r ?? Math.max(hb?.w ?? 48, hb?.h ?? 48) * 0.5);
+    const hw = Math.max(4, (hb?.w ?? r * 2) * 0.5);
+    const hh = Math.max(4, (hb?.h ?? r * 2) * 0.5);
+    const cx = tf.x;
+    const cy = tf.y;
+    const fillCol = isHit ? 'rgba(244,63,94,0.16)' : 'rgba(34,211,238,0.06)';
+    if (shape === 'circle') {
+      hitboxSvg = `<g pointer-events="none"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="${fillCol}" stroke="${col}" stroke-width="1.6" stroke-dasharray="5 3" /><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.2" fill="${col}" />${isHit ? `<text x="${cx.toFixed(1)}" y="${(cy - r - 6).toFixed(1)}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" font-weight="700" fill="${col}">HIT!</text>` : ''}</g>`;
+    } else {
+      const bx = cx - hw;
+      const by = cy - hh;
+      const bw = hw * 2;
+      const bh = hh * 2;
+      hitboxSvg = `<g pointer-events="none"><rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${fillCol}" stroke="${col}" stroke-width="1.5" stroke-dasharray="5 3" />${isHit ? `<text x="${cx.toFixed(1)}" y="${(by - 5).toFixed(1)}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" font-weight="700" fill="${col}">HIT!</text>` : ''}</g>`;
+    }
+  }
+
   const tfAttr = buildTransformAttr(tf, layer.origin);
   const styleParts = [
     layer.blendMode ? `mix-blend-mode: ${layer.blendMode};` : '',
@@ -1742,7 +2527,24 @@ function renderLayer(
     .join(' ');
 
   const groupMarkup = `<g${attrs ? ` ${attrs}` : ''}${filterAttr}>${bodyContent}</g>`;
-  return groundShadowSvg ? `${groundShadowSvg}${groupMarkup}` : groupMarkup;
+
+  // Motion-blur ghost trail if layer.motion.trail configured
+  let trailMarkup = '';
+  if (layer.motion?.trail && (layer.motion.trail.count ?? 0) > 0) {
+    const tCount = Math.min(8, Math.max(1, Math.round(layer.motion.trail.count ?? 3)));
+    const lagStep = layer.motion.trail.lagStep ?? 0.025;
+    const decay = layer.motion.trail.opacityDecay ?? 0.55;
+    for (let tr = tCount; tr >= 1; tr -= 1) {
+      const pastT = Math.max(0, vars.t - tr * lagStep);
+      const pastVars = { ...vars, t: pastT, deg: pastT * 360, rad: pastT * Math.PI * 2 };
+      const pastTf = resolveLayerTransform(layer, pastVars, frameCount);
+      const pastAttr = buildTransformAttr(pastTf, layer.origin);
+      const pastOp = (tf.opacity * Math.pow(decay, tr)).toFixed(3);
+      trailMarkup += `<g${pastAttr ? ` transform="${pastAttr}"` : ''} opacity="${pastOp}"${filterAttr}>${bodyContent}</g>`;
+    }
+  }
+
+  return `${groundShadowSvg}${trailMarkup}${groupMarkup}${hitboxSvg}`;
 }
 
 function resolveStoryboardCamera(
@@ -1781,6 +2583,17 @@ function resolveStoryboardCamera(
   if (activeShot.cameraCut === 'closeup' && activeShot.cameraAngle?.zoom === undefined) zoom = 1.32;
   if (activeShot.cameraCut === 'wide' && activeShot.cameraAngle?.zoom === undefined) zoom = 0.9;
   if (activeShot.cameraCut === 'dutch' && activeShot.cameraAngle?.roll === undefined) roll = -6;
+  if (activeShot.cameraCut === 'zoomIn' && activeShot.cameraAngle?.zoom === undefined) zoom = 1 + vars.t * 0.45;
+  if (activeShot.cameraCut === 'zoomOut' && activeShot.cameraAngle?.zoom === undefined) zoom = 1.4 - vars.t * 0.4;
+  if (activeShot.cameraCut === 'panLeft' && activeShot.cameraAngle?.panX === undefined) panX = (0.5 - vars.t) * 90;
+  if (activeShot.cameraCut === 'panRight' && activeShot.cameraAngle?.panX === undefined) panX = (vars.t - 0.5) * 90;
+  if (activeShot.cameraCut === 'shake') {
+    panX += Math.sin(vars.t * 68) * 6;
+    panY += Math.cos(vars.t * 82) * 5;
+  }
+  if (activeShot.cameraCut === 'tilt' && activeShot.cameraAngle?.roll === undefined) {
+    roll = Math.sin(vars.t * Math.PI * 2) * 5;
+  }
 
   if (activeShot.trackingTarget) {
     const tracked = transformMap.get(activeShot.trackingTarget);
@@ -1803,12 +2616,18 @@ function resolveStoryboardCamera(
 
   let uiOverlaySvg = '';
   if (activeShot.uiAngle) {
-    const { title, subtitle, badge, showTimecode } = activeShot.uiAngle;
+    const { title, subtitle, badge, showTimecode, fpsBadge, reticle, letterbox } = activeShot.uiAngle;
     const secs = (vars.t * durationSec).toFixed(2);
     const pieces: string[] = [];
+    if (letterbox) {
+      pieces.push(`<rect x="0" y="0" width="${width}" height="34" fill="#020617" /><rect x="0" y="${height - 34}" width="${width}" height="34" fill="#020617" />`);
+    }
+    if (reticle) {
+      pieces.push(`<g stroke="rgba(56,189,248,0.45)" stroke-width="1.2" fill="none"><circle cx="${cx}" cy="${cy}" r="28" stroke-dasharray="4 4" /><line x1="${cx - 42}" y1="${cy}" x2="${cx - 18}" y2="${cy}" /><line x1="${cx + 18}" y1="${cy}" x2="${cx + 42}" y2="${cy}" /><line x1="${cx}" y1="${cy - 42}" x2="${cx}" y2="${cy - 18}" /><line x1="${cx}" y1="${cy + 18}" x2="${cx}" y2="${cy + 42}" /></g>`);
+    }
     if (title || subtitle || badge) {
       pieces.push(
-        `<g transform="translate(24 ${height - 76})">` +
+        `<g transform="translate(24 ${height - (letterbox ? 96 : 76)})">` +
           `<rect x="0" y="0" width="290" height="52" rx="10" fill="rgba(15,23,42,0.72)" stroke="rgba(255,255,255,0.16)" />` +
           (badge
             ? `<rect x="12" y="10" width="${Math.max(44, badge.length * 7 + 16)}" height="16" rx="4" fill="#38bdf8" /><text x="20" y="21" font-family="JetBrains Mono, monospace" font-size="9.5" font-weight="700" fill="#0f172a">${escapeXmlAttr(badge)}</text>`
@@ -1822,9 +2641,9 @@ function resolveStoryboardCamera(
           `</g>`
       );
     }
-    if (showTimecode) {
+    if (showTimecode || fpsBadge) {
       pieces.push(
-        `<g transform="translate(${width - 118} 20)"><rect x="0" y="0" width="96" height="24" rx="6" fill="rgba(15,23,42,0.72)" /><text x="48" y="16" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" fill="#e2e8f0">TC ${secs}s</text></g>`
+        `<g transform="translate(${width - 126} ${letterbox ? 44 : 20})"><rect x="0" y="0" width="104" height="24" rx="6" fill="rgba(15,23,42,0.72)" /><text x="52" y="16" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" font-weight="600" fill="#e2e8f0">${showTimecode ? `TC ${secs}s` : ''}${fpsBadge ? ` ${Math.round(vars.fps || 24)}FPS` : ''}</text></g>`
       );
     }
     uiOverlaySvg = pieces.join('');
@@ -1833,6 +2652,14 @@ function resolveStoryboardCamera(
   let postEffectSvg = '';
   if (activeShot.effect === 'vignette') {
     postEffectSvg = `<rect x="0" y="0" width="${width}" height="${height}" fill="url(#cinemaVignette)" pointer-events="none" />`;
+  } else if (activeShot.effect === 'crt') {
+    postEffectSvg = `<rect x="0" y="0" width="${width}" height="${height}" fill="url(#cinemaVignette)" opacity="0.65" pointer-events="none" /><g opacity="0.12" stroke="#000000" stroke-width="1">${Array.from({ length: Math.ceil(height / 4) }, (_, idx) => `<line x1="0" y1="${idx * 4}" x2="${width}" y2="${idx * 4}" />`).join('')}</g>`;
+  } else if (activeShot.effect === 'cyberpunk') {
+    postEffectSvg = `<rect x="0" y="0" width="${width}" height="${height}" fill="url(#iridescentHologram)" opacity="0.1" style="mix-blend-mode:screen;" pointer-events="none" /><rect x="0" y="0" width="${width}" height="${height}" fill="url(#cinemaVignette)" opacity="0.6" pointer-events="none" />`;
+  } else if (activeShot.effect === 'sepia') {
+    postEffectSvg = `<rect x="0" y="0" width="${width}" height="${height}" fill="#78350f" opacity="0.24" style="mix-blend-mode:color;" pointer-events="none" />`;
+  } else if (activeShot.effect === 'noir') {
+    postEffectSvg = `<rect x="0" y="0" width="${width}" height="${height}" fill="#0f172a" opacity="0.35" style="mix-blend-mode:saturation;" pointer-events="none" /><rect x="0" y="0" width="${width}" height="${height}" fill="url(#cinemaVignette)" pointer-events="none" />`;
   }
 
   return {
@@ -1960,8 +2787,10 @@ export function renderStopMotionSceneFrameSvg(
     transformMap
   );
 
+  const physicsMap = getSimulatedPhysicsMap(scene, totalFrames, fps, width, height);
+
   const layersSvg = scene.layers
-    .map((layer) =>
+    .map((layer, lIdx) =>
       renderLayer(
         layer,
         vars,
@@ -1971,7 +2800,10 @@ export function renderStopMotionSceneFrameSvg(
         scene.groups,
         scene.threeLighting,
         transformMap,
-        preCam.camOffset
+        preCam.camOffset,
+        physicsMap,
+        lIdx,
+        Boolean(scene.showHitboxes)
       )
     )
     .filter(Boolean)
@@ -2121,6 +2953,11 @@ export function evaluateStopMotionFidelity(scene: StopMotionSceneV2): {
   ) {
     score += 4;
     notes.push('Multi-modal 3D/Curve/Texture choreography active');
+  }
+
+  if (scene.layers.some((l) => Boolean(l.physics || l.hitbox))) {
+    score += 4;
+    notes.push('Deterministic 2D physics & hitbox collision solver active');
   }
 
   if (totalLogicalFrames > MAX_PREVIEW_FRAMES) {

@@ -128,7 +128,7 @@ export function getContextualGreeting(ctx: GreetingContext): {
     ],
     general: [
       'Code live sandboxes, animate in Stop Motion v3, draw 512px pixel art, or brainstorm.',
-      'OXYGEN multi-engine suite ready — ask anything or launch a studio above.',
+      'Folio Zero (v4.1) multi-engine suite ready — ask anything or launch a studio above.',
     ],
   };
 

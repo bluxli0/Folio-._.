@@ -8,6 +8,24 @@ export type ThreeDShapeType =
   | 'icosahedron'
   | 'dodecahedron'
   | 'octahedron'
+  | 'tetrahedron'
+  | 'capsule'
+  | 'ring'
+  | 'plane'
+  | 'pyramid'
+  | 'prism'
+  | 'helix'
+  | 'mobius'
+  | 'gear'
+  | 'star'
+  | 'crystal'
+  | 'gridFloor'
+  | 'particleCloud'
+  | 'splineTube'
+  | 'terrain'
+  | 'dnaHelix'
+  | 'waveSurface'
+  | 'graphRibbon'
   | 'custom';
 
 export type ThreeDMaterialType =
@@ -18,37 +36,92 @@ export type ThreeDMaterialType =
   | 'clay'
   | 'wireframe'
   | 'toon'
-  | 'normal';
+  | 'normal'
+  | 'chrome'
+  | 'hologram'
+  | 'iridescent'
+  | 'matte'
+  | 'obsidian'
+  | 'lava'
+  | 'ice'
+  | 'emerald'
+  | 'copper'
+  | 'carbon'
+  | 'glassTinted'
+  | 'additiveGlow';
 
 export type ThreeDLightingPreset =
   | 'studio'
   | 'sunset'
   | 'cyberpunk'
   | 'dramatic'
-  | 'matrix';
+  | 'matrix'
+  | 'vaporwave'
+  | 'noir'
+  | 'arctic'
+  | 'volcanic'
+  | 'emeraldForest'
+  | 'goldenHour'
+  | 'void';
 
 export type ThreeDAnimationPreset =
   | 'rotate'
   | 'bounce'
+  | 'physicsBounce'
   | 'pulse'
   | 'float'
   | 'orbit'
   | 'chaos'
+  | 'figure8'
+  | 'spiral'
+  | 'pendulum'
+  | 'wobble'
+  | 'breathing'
+  | 'spinX'
+  | 'spinZ'
+  | 'spring'
+  | 'lissajous'
+  | 'explodeLoop'
   | 'none';
+
+export interface ThreeDPhysicsSpec {
+  enabled?: boolean;
+  vx?: number;
+  vy?: number;
+  vz?: number;
+  gravity?: number;
+  restitution?: number;
+  floorY?: number;
+  walls?: [number, number, number];
+  mass?: number;
+  drag?: number;
+  attractor?: { x?: number; y?: number; z?: number; strength?: number };
+}
 
 export interface ThreeDObjectSpec {
   id: string;
   shape: ThreeDShapeType;
   material: ThreeDMaterialType;
   color: string;
+  gradientColors?: string[];
+  mathExpr?: string;
   roughness: number;
   metalness: number;
   wireframe: boolean;
+  emissive?: string;
+  emissiveIntensity?: number;
+  opacity?: number;
+  flatShading?: boolean;
+  repeat?: number | { count: number; radius?: number; dy?: number };
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
   animation: ThreeDAnimationPreset;
   speed: number;
+  hitbox?: boolean;
+  hitboxColor?: string;
+  collideColor?: string;
+  physics?: ThreeDPhysicsSpec;
 }
 
 export interface ThreeDVoxel {
@@ -67,6 +140,14 @@ export interface ThreeDSceneSpec {
   autoRotate: boolean;
   bloom: boolean;
   shadows: boolean;
+  showHitboxes?: boolean;
+  physicsFloorY?: number;
+  fogColor?: string;
+  fogDensity?: number;
+  starfield?: boolean | number;
+  gridFloor?: boolean;
+  cameraFov?: number;
+  exposure?: number;
   objects: ThreeDObjectSpec[];
   customJsCode?: string;
   bbmodel?: Record<string, unknown>;

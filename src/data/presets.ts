@@ -13,22 +13,26 @@ import {
 export const MODEL_OPTIONS: ModelOption[] = [
   {
     id: 'auto',
+    group: 'Smart Routing',
     name: 'Auto Router (Smart)',
     shortName: 'Auto',
     description: 'Automatically selects the optimal reasoning, creative, or image model per prompt with live fallback',
     apiModel: 'auto',
     speedLabel: 'Adaptive',
   },
+  // ── Gemini 4 Series (Grouped) ──
   {
-    id: 'flash-lite-3.1',
-    name: 'Flash Lite 3.1',
-    shortName: 'Flash Lite',
-    description: 'Fastest responses for everyday chat and quick drafts',
-    apiModel: 'gemini-3.1-flash-lite',
-    speedLabel: 'Ultra Fast',
+    id: 'flash-4',
+    group: 'Gemini 4 Series',
+    name: 'Gemini 4 Flash',
+    shortName: 'Gemini 4 Flash',
+    description: 'Next-gen Gemini Flash speed + low-latency coding, tool calling & reasoning',
+    apiModel: 'gemini-4-hydrogen',
+    speedLabel: 'Flash 4',
   },
   {
     id: 'hydrogen-4-fast',
+    group: 'Gemini 4 Series',
     name: 'Hydrogen 4 Fast',
     shortName: 'Hydrogen Fast',
     description: 'Quick reasoning and coding with low latency',
@@ -37,6 +41,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
   {
     id: 'hydrogen-4-balanced',
+    group: 'Gemini 4 Series',
     name: 'Hydrogen 4 Balanced',
     shortName: 'Hydrogen 4',
     description: 'Stronger analytical depth for technical tasks',
@@ -45,6 +50,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
   {
     id: 'hydrogen-4-deep',
+    group: 'Gemini 4 Series',
     name: 'Hydrogen 4 Deep',
     shortName: 'Hydrogen Deep',
     description: 'Extended multi-step thinking for complex problems',
@@ -53,6 +59,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
   {
     id: 'neon-4',
+    group: 'Gemini 4 Series',
     name: 'Neon 4 (Pro Creative)',
     shortName: 'Neon 4',
     description: 'Maximum creative synthesis, v3 shaders, 3D choreography & deep architecture',
@@ -62,6 +69,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
   {
     id: 'carbon-4',
+    group: 'Gemini 4 Series',
     name: 'Carbon 4 (Precision)',
     shortName: 'Carbon 4',
     description: 'High-efficiency frontier coding, math & structured production pipelines',
@@ -70,16 +78,87 @@ export const MODEL_OPTIONS: ModelOption[] = [
     isPaid: true,
   },
   {
+    id: 'argon-4',
+    group: 'Gemini 4 Series',
+    name: 'Argon 4 (Gemini 4 Argon)',
+    shortName: 'Argon 4',
+    description: 'Gemini 4 Argon high-throughput enterprise reasoning & architecture tier',
+    apiModel: 'gemini-4-argon',
+    speedLabel: 'Argon 4',
+    isPaid: true,
+  },
+  // ── Gemini 3 Series & Live ──
+  {
+    id: 'flash-3.8',
+    group: 'Gemini 3 Series & Live',
+    name: 'Gemini 3.8 Flash',
+    shortName: '3.8 Flash',
+    description: 'Fast Gemini 3.8 Flash tier for responsive coding, multimodal inspection & structured JSON',
+    apiModel: 'gemini-3.8-flash',
+    speedLabel: '3.8 Flash',
+  },
+  {
+    id: 'flash-lite-3.1',
+    group: 'Gemini 3 Series & Live',
+    name: 'Gemini 3.1 Flash Lite',
+    shortName: 'Flash Lite',
+    description: 'Fastest lightweight Gemini Flash responses for everyday chat and quick drafts',
+    apiModel: 'gemini-3.1-flash-lite',
+    speedLabel: 'Ultra Fast',
+  },
+  {
+    id: 'omni-flash-1.2',
+    group: 'Gemini 3 Series & Live',
+    name: 'Gemini Omni 1.2 Flash',
+    shortName: 'Omni Flash',
+    description: 'Multimodal Gemini Flash tuned for video, audio, visual engines & fast inspection',
+    apiModel: 'gemini-omni-1.2-flash',
+    speedLabel: 'Omni Flash',
+    isPaid: true,
+  },
+  {
+    id: 'live-extended-3.8',
+    group: 'Gemini 3 Series & Live',
+    name: 'Gemini Extended Live (3.8)',
+    shortName: 'Extended Live',
+    description: 'Gemini 3.8 Live Extended Thinking via Live API with non-blocking async tool execution',
+    apiModel: 'gemini-3.8-live-extended-thinking',
+    speedLabel: 'Live Think',
+  },
+  // ── Gemma Open Models ──
+  {
+    id: 'gemma-3-27b',
+    group: 'Gemma Open Models',
+    name: 'Gemma 3 27B IT',
+    shortName: 'Gemma 27B',
+    description: 'Open-weights Gemma 3 27B Instruct for crisp instruction following & transparent reasoning',
+    apiModel: 'gemma-3-27b-it',
+    speedLabel: 'Gemma 27B',
+  },
+  {
+    id: 'gemma-3-12b',
+    group: 'Gemma Open Models',
+    name: 'Gemma 3 12B IT',
+    shortName: 'Gemma 12B',
+    description: 'Lightweight Gemma 3 12B Instruct for fast, low-overhead open-weights drafting',
+    apiModel: 'gemma-3-12b-it',
+    speedLabel: 'Gemma 12B',
+  },
+  // ── Local & Remote Hybrid ──
+  {
     id: 'neo-4',
-    name: 'Neo 4 (Python Rule AI)',
+    group: 'Local & Remote Hybrid',
+    name: 'Neo 4 (Neural LLM)',
     shortName: 'Neo 4',
-    description: 'Experimental Python rule-based engine: subword Lego bricks, ±k semantic disambiguator, OSASCOMP-rated Markov Chain & AST math/physics solver',
+    description: "When using LLM it's smarter",
     apiModel: 'neo-4-python',
     speedLabel: 'Local Py',
     isLocalPython: true,
   },
+  // ── Image Synthesis ──
   {
     id: 'nano-banana-lite',
+    group: 'Image Synthesis',
     name: 'Nano Banana Lite (Image)',
     shortName: 'Nano Banana',
     description: 'Fast direct image synthesis & style reference rendering via gemini-3.1-flash-lite-image',
@@ -102,8 +181,22 @@ export const THINKING_MODE_OPTIONS: Array<{
   { id: 'deep', label: 'Deep', description: 'Maximum CoT beam & ±6 semantic radius' },
 ];
 
-export function getModelOption(id?: string): ModelOption {
-  return MODEL_OPTIONS.find((m) => m.id === id) || MODEL_OPTIONS[2];
+export function getModelOption(id?: string, neoMode: 'llm' | 'rule' = 'llm'): ModelOption {
+  const opt =
+    MODEL_OPTIONS.find((m) => m.id === id) ||
+    MODEL_OPTIONS.find((m) => m.id === 'flash-lite-3.1') ||
+    MODEL_OPTIONS[1];
+  if (opt.id === 'neo-4') {
+    return {
+      ...opt,
+      name: neoMode === 'llm' ? 'Neo 4 (Neural LLM)' : 'Neo 4 (Rule AI)',
+      description:
+        neoMode === 'llm'
+          ? "When using LLM it's smarter"
+          : 'When using rule-based Markov chains 🥀',
+    };
+  }
+  return opt;
 }
 
 export const DEFAULT_TRI_MODEL_CONFIG: TriModelConfig = {
@@ -190,7 +283,7 @@ export const TEXT_ANIMATION_PRESETS: TextAnimationPreset[] = [
               opacity: 'clamp(t * 3, 0, 1)',
             },
             shadow: { groundY: 290, rx: 140, ry: 12, opacity: 0.28 },
-            svg: '<text x="0" y="0" text-anchor="middle" dominant-baseline="middle" font-family="Plus Jakarta Sans, sans-serif" font-weight="800" font-size="64" fill="#f8fafc" letter-spacing="4">OXYGEN</text>',
+            svg: '<text x="0" y="0" text-anchor="middle" dominant-baseline="middle" font-family="Plus Jakarta Sans, sans-serif" font-weight="800" font-size="60" fill="#f8fafc" letter-spacing="4">FOLIO ZERO</text>',
           },
         ],
       },
@@ -247,7 +340,7 @@ export const TEXT_ANIMATION_PRESETS: TextAnimationPreset[] = [
               x: 'lerp(-260, 120, easeOutExpo(clamp(t * 2, 0, 1)))',
               y: '320',
             },
-            svg: '<rect x="0" y="0" width="8" height="68" rx="4" fill="#38bdf8"/><rect x="20" y="4" width="380" height="60" rx="10" fill="rgba(255,255,255,0.08)"/><text x="38" y="31" font-family="Plus Jakarta Sans, sans-serif" font-weight="700" font-size="20" fill="#ffffff">Folio v(OXYGEN)</text><text x="38" y="53" font-family="JetBrains Mono, monospace" font-size="13" fill="#94a3b8">Production Timeline · 60fps Engine</text>',
+            svg: '<rect x="0" y="0" width="8" height="68" rx="4" fill="#38bdf8"/><rect x="20" y="4" width="380" height="60" rx="10" fill="rgba(255,255,255,0.08)"/><text x="38" y="31" font-family="Plus Jakarta Sans, sans-serif" font-weight="700" font-size="20" fill="#ffffff">Folio Zero · v4.1</text><text x="38" y="53" font-family="JetBrains Mono, monospace" font-size="13" fill="#94a3b8">Production Timeline · 60fps Engine</text>',
           },
         ],
       },

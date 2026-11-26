@@ -1,5 +1,6 @@
 import { StopMotionDemo, StopMotionFrame } from '../types/stopMotion';
 import { svgMarkupToDataUrl, TACTILE_SVG_FILTERS_DEFS } from './vectorBrushes';
+import { renderStopMotionSceneFrameSvg, StopMotionSceneV2 } from './stopMotionEngine';
 
 function makeVectorFrame(
   svgMarkup: string,
@@ -827,6 +828,206 @@ export const STOP_MOTION_DEMOS: StopMotionDemo[] = [
               : ''
           }
         `;
+        return makeVectorFrame(svg, w, h, bg, 1, i);
+      });
+    },
+  },
+
+  // 11. Harmonic Wave Graph & Gradient Spectrum (120 Frames)
+  {
+    id: 'harmonic-wave-graph-gradient',
+    title: '11. Harmonic Wave Graph & Gradients (120f)',
+    category: 'Math & Graphs',
+    description: '120-frame live Stop Motion v3 math graph y(x,t) with spectral strokeGradient, fillGradient & storyboard cuts',
+    fps: 24,
+    pingPong: false,
+    background: '#060a14',
+    buildFrames: (w, h) => {
+      const count = 120;
+      const bg = '#060a14';
+      const scene: StopMotionSceneV2 = {
+        format: 'stopmotion/v3',
+        title: 'Harmonic Wave Graph & Gradient Spectrum',
+        width: w,
+        height: h,
+        fps: 24,
+        durationSec: 5,
+        background: bg,
+        backdrop: `<rect x="0" y="0" width="${w}" height="${h}" fill="#060a14" /><circle cx="${(w * 0.5).toFixed(1)}" cy="${(h * 0.48).toFixed(1)}" r="${(Math.min(w, h) * 0.42).toFixed(1)}" fill="rgba(56,189,248,0.08)" />`,
+        layers: [
+          {
+            id: 'primary_wave',
+            x: w * 0.5,
+            y: h * 0.52,
+            curve: {
+              type: 'graph',
+              expr: 'sin(x * 1.4 - t * TAU) * cos(x * 0.35 + t * TAU * 0.5) * 1.15',
+              xmin: -6.28,
+              xmax: 6.28,
+              ymin: -1.4,
+              ymax: 1.4,
+              rx: w * 0.82,
+              ry: h * 0.58,
+              samples: 180,
+              strokeGradient: ['#38bdf8', '#a855f7', '#ec4899', '#facc15'],
+              fillGradient: ['#38bdf8', '#8b5cf6', '#060a14'],
+              strokeWidth: 4.5,
+              glow: true,
+              axes: true,
+            },
+          },
+          {
+            id: 'secondary_wave',
+            x: w * 0.5,
+            y: h * 0.52,
+            curve: {
+              type: 'graph',
+              expr: '0.65 * cos(x * 2.1 + t * TAU * 2)',
+              xmin: -6.28,
+              xmax: 6.28,
+              ymin: -1.4,
+              ymax: 1.4,
+              rx: w * 0.82,
+              ry: h * 0.58,
+              samples: 160,
+              axes: false,
+              strokeGradient: ['#34d399', '#22d3ee', '#818cf8'],
+              strokeWidth: 2.5,
+              glow: true,
+            },
+          },
+        ],
+      };
+
+      return Array.from({ length: count }, (_, i) => {
+        const svg = renderStopMotionSceneFrameSvg(scene, i, count, 24);
+        return makeVectorFrame(svg, w, h, bg, 1, i);
+      });
+    },
+  },
+
+  // 12. Gradient Parametric Lissajous & Rose (120 Frames)
+  {
+    id: 'gradient-parametric-lissajous',
+    title: '12. Gradient Parametric Orbit (120f)',
+    category: 'Math & Graphs',
+    description: '120-frame self-drawing parametric rose & Lissajous orbital harmonic curves with multi-stop gradients',
+    fps: 24,
+    pingPong: false,
+    background: '#090714',
+    buildFrames: (w, h) => {
+      const count = 120;
+      const bg = '#090714';
+      const scene: StopMotionSceneV2 = {
+        format: 'stopmotion/v3',
+        title: 'Gradient Parametric Orbit',
+        width: w,
+        height: h,
+        fps: 24,
+        durationSec: 5,
+        background: bg,
+        backdrop: `<rect x="0" y="0" width="${w}" height="${h}" fill="#090714" />`,
+        layers: [
+          {
+            id: 'rose_core',
+            x: w * 0.5,
+            y: h * 0.5,
+            motion: { rotate: 't * 90' },
+            curve: {
+              type: 'rose',
+              petals: 5,
+              rx: Math.min(w, h) * 0.34,
+              turns: 2,
+              samples: 240,
+              progress: 'min(1, t * 1.15)',
+              strokeGradient: ['#f43f5e', '#a855f7', '#38bdf8'],
+              strokeWidth: 3.5,
+              glow: true,
+            },
+          },
+          {
+            id: 'lissajous_ring',
+            x: w * 0.5,
+            y: h * 0.5,
+            curve: {
+              type: 'parametric',
+              xExpr: 'sin(u * TAU * 3 + t * TAU)',
+              yExpr: 'cos(u * TAU * 2)',
+              rx: Math.min(w, h) * 0.64,
+              ry: Math.min(w, h) * 0.64,
+              samples: 220,
+              strokeGradient: ['#38bdf8', '#34d399', '#facc15'],
+              strokeWidth: 3,
+              glow: true,
+            },
+          },
+        ],
+      };
+
+      return Array.from({ length: count }, (_, i) => {
+        const svg = renderStopMotionSceneFrameSvg(scene, i, count, 24);
+        return makeVectorFrame(svg, w, h, bg, 1, i);
+      });
+    },
+  },
+
+  // 13. Rigid-Body Physics & Hitbox Arena (120 Frames)
+  {
+    id: 'physics-hitbox-arena',
+    title: '13. Physics Bounce & Hitbox Arena (120f)',
+    category: 'Physics & Hitbox',
+    description: '120-frame deterministic rigid-body gravity, floor/wall restitution, elastic collisions & live collision hitboxes',
+    fps: 24,
+    pingPong: false,
+    background: '#070b14',
+    buildFrames: (w, h) => {
+      const count = 120;
+      const bg = '#070b14';
+      const groundY = Math.round(h * 0.84);
+      const arenaBounds: [number, number, number, number] = [28, 28, w - 28, groundY];
+      const scene: StopMotionSceneV2 = {
+        format: 'stopmotion/v3',
+        title: 'Rigid-Body Physics & Hitbox Collision Arena',
+        width: w,
+        height: h,
+        fps: 24,
+        durationSec: 5,
+        background: bg,
+        showHitboxes: true,
+        backdrop: `<rect x="0" y="0" width="${w}" height="${h}" fill="#070b14" /><rect x="28" y="28" width="${w - 56}" height="${groundY - 28}" rx="12" fill="rgba(15,23,42,0.55)" stroke="rgba(56,189,248,0.28)" stroke-width="1.5" stroke-dasharray="6 4" /><line x1="20" y1="${groundY}" x2="${w - 20}" y2="${groundY}" stroke="#38bdf8" stroke-width="2" opacity="0.65" />`,
+        layers: [
+          {
+            id: 'cyan_orb',
+            x: Math.round(w * 0.22),
+            y: Math.round(h * 0.24),
+            shadow: { type: 'ground', groundY, rx: 32, ry: 8, color: '#020617', opacity: 0.45 },
+            hitbox: { shape: 'circle', r: 28, show: true, color: '#22d3ee', collideColor: '#f43f5e' },
+            physics: { vx: 210, vy: -90, gravity: 620, restitution: 0.88, mass: 1.2, bounds: arenaBounds },
+            svg: `<circle cx="0" cy="0" r="28" fill="url(#wetGlazeCyan)" filter="url(#softGlow)" /><ellipse cx="-9" cy="-10" rx="8" ry="4" transform="rotate(-30 -9 -10)" fill="#ffffff" opacity="0.65" />`,
+          },
+          {
+            id: 'rose_orb',
+            x: Math.round(w * 0.78),
+            y: Math.round(h * 0.22),
+            shadow: { type: 'ground', groundY, rx: 28, ry: 7, color: '#020617', opacity: 0.45 },
+            hitbox: { shape: 'circle', r: 24, show: true, color: '#a855f7', collideColor: '#f43f5e' },
+            physics: { vx: -235, vy: 30, gravity: 620, restitution: 0.9, mass: 1.0, bounds: arenaBounds },
+            svg: `<circle cx="0" cy="0" r="24" fill="url(#wetGlazePink)" filter="url(#softGlow)" /><ellipse cx="-7" cy="-8" rx="7" ry="3.5" transform="rotate(-30 -7 -8)" fill="#ffffff" opacity="0.65" />`,
+          },
+          {
+            id: 'gold_crate',
+            x: Math.round(w * 0.5),
+            y: Math.round(h * 0.56),
+            shadow: { type: 'ground', groundY, rx: 34, ry: 8, color: '#020617', opacity: 0.45 },
+            hitbox: { shape: 'rect', w: 54, h: 42, show: true, color: '#facc15', collideColor: '#f43f5e' },
+            physics: { vx: 115, vy: -180, gravity: 660, restitution: 0.82, mass: 1.8, bounds: arenaBounds },
+            svg: `<rect x="-27" y="-21" width="54" height="42" rx="8" fill="url(#metallicGold)" stroke="#fef08a" stroke-width="1.5" />`,
+          },
+        ],
+      };
+
+      return Array.from({ length: count }, (_, i) => {
+        const svg = renderStopMotionSceneFrameSvg(scene, i, count, 24);
         return makeVectorFrame(svg, w, h, bg, 1, i);
       });
     },

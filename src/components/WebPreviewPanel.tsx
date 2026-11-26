@@ -113,7 +113,7 @@ export const WebPreviewPanel: React.FC<WebPreviewPanelProps> = ({
   const [newDomainWorkspaceId, setNewDomainWorkspaceId] = useState<string>('folio-sandbox-1');
   const [newDomainEntryFolder, setNewDomainEntryFolder] = useState<string>('site');
   const [newDomainHtml, setNewDomainHtml] = useState<string>(
-    '<!doctype html><html><body style="font-family:system-ui;padding:32px;background:#0f172a;color:#f8fafc;"><h1>Simulated Domain Active</h1><p>Hosted via Folio v(OXYGEN) Domain Simulator.</p></body></html>'
+    '<!doctype html><html><body style="font-family:system-ui;padding:32px;background:#0f172a;color:#f8fafc;"><h1>Simulated Domain Active</h1><p>Hosted via Folio Zero (v4.1) Domain Simulator.</p></body></html>'
   );
   const [newDomainTargetUrl, setNewDomainTargetUrl] = useState<string>('https://example.com');
   const [domainBusy, setDomainBusy] = useState<boolean>(false);
@@ -383,7 +383,7 @@ export const WebPreviewPanel: React.FC<WebPreviewPanelProps> = ({
           dnsRecords: [
             { type: 'A', host: '@', value: dnsTargetIp || '104.21.48.192', ttl: 300 },
             { type: 'CNAME', host: 'www', value: domainToReg, ttl: 300 },
-            { type: 'TXT', host: '@', value: `v=folio-oxygen site=${domainToReg}`, ttl: 300 },
+            { type: 'TXT', host: '@', value: `v=folio-zero site=${domainToReg}`, ttl: 300 },
           ],
         }),
       });

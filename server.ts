@@ -11,27 +11,36 @@ import { execFile, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import * as esbuild from 'esbuild';
 import {
+  Behavior,
   Content,
   FunctionDeclaration,
+  FunctionResponseScheduling,
   GoogleGenAI,
   HarmBlockThreshold,
   HarmCategory,
+  InteractionStatus,
+  LiveServerMessage,
+  Modality,
   Part,
   SafetySetting,
   ThinkingLevel,
   Type,
 } from '@google/genai';
+import { FOLIO_CHANGELOGS, FOLIO_CURRENT_VERSION } from './src/data/changelogs';
+import { FOLIO_DOCS_SECTIONS, searchFolioDocs } from './src/data/folioDocs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const FOLIO_BIN_DIR = path.resolve(__dirname, '.folio-data', 'bin');
+const FOLIO_BACKUPS_DIR = path.resolve(__dirname, '.folio-data', 'backups');
+const FOLIO_NEO4_DIR = path.resolve(__dirname, '.folio-data', 'neo4');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '50mb' }));
 
-function createGeminiClient() {
+function createGeminiClient(apiVersion?: string) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured. Please set a billing-enabled API key in Settings > Secrets.');
@@ -39,6 +48,7 @@ function createGeminiClient() {
   return new GoogleGenAI({
     apiKey,
     httpOptions: {
+      ...(apiVersion ? { apiVersion } : {}),
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -65,12 +75,19 @@ interface IncomingMessage {
 
 type ModelChoiceId =
   | 'auto'
-  | 'flash-lite-3.1'
+  | 'flash-4'
   | 'hydrogen-4-fast'
   | 'hydrogen-4-balanced'
   | 'hydrogen-4-deep'
   | 'neon-4'
   | 'carbon-4'
+  | 'argon-4'
+  | 'flash-3.8'
+  | 'flash-lite-3.1'
+  | 'omni-flash-1.2'
+  | 'live-extended-3.8'
+  | 'gemma-3-27b'
+  | 'gemma-3-12b'
   | 'neo-4'
   | 'nano-banana-lite';
 
@@ -232,6 +249,21 @@ function selectAutoModel(
   const textLen = (lastUser?.text || '').length;
   const hasAttachments = Boolean(lastUser?.attachments && lastUser.attachments.length > 0);
 
+  if (isModelInCooldown('gemini-4-hydrogen')) {
+    if (!isModelInCooldown('gemini-3.1-flash-lite')) {
+      return {
+        id: 'flash-lite-3.1',
+        model: 'gemini-3.1-flash-lite',
+        thinkingLevel: ThinkingLevel.MINIMAL,
+      };
+    }
+    return {
+      id: 'flash-4',
+      model: 'gemini-2.5-flash',
+      thinkingLevel: ThinkingLevel.LOW,
+    };
+  }
+
   if (intents.blender || intents.mathCurve || intents.model3d || intents.hybrid || intents.evo) {
     return {
       id: 'hydrogen-4-balanced',
@@ -251,6 +283,13 @@ function selectAutoModel(
       id: 'hydrogen-4-fast',
       model: 'gemini-4-hydrogen',
       thinkingLevel: ThinkingLevel.LOW,
+    };
+  }
+  if (isModelInCooldown('gemini-3.1-flash-lite')) {
+    return {
+      id: 'flash-lite-3.1',
+      model: 'gemini-2.5-flash-lite',
+      thinkingLevel: ThinkingLevel.MINIMAL,
     };
   }
   return {
@@ -294,6 +333,37 @@ function getModelConfig(
         thinkingLevel: ThinkingLevel.HIGH,
         isPaid: true,
       };
+    case 'argon-4':
+      return {
+        id: 'argon-4',
+        model: 'gemini-4-argon',
+        thinkingLevel: ThinkingLevel.MEDIUM,
+        isPaid: true,
+      };
+    case 'flash-3.8':
+      return {
+        id: 'flash-3.8',
+        model: 'gemini-3.8-flash',
+        thinkingLevel: ThinkingLevel.LOW,
+      };
+    case 'live-extended-3.8':
+      return {
+        id: 'live-extended-3.8',
+        model: 'gemini-3.8-live-extended-thinking',
+        thinkingLevel: ThinkingLevel.MEDIUM,
+      };
+    case 'gemma-3-27b':
+      return {
+        id: 'gemma-3-27b',
+        model: 'gemma-3-27b-it',
+        thinkingLevel: ThinkingLevel.LOW,
+      };
+    case 'gemma-3-12b':
+      return {
+        id: 'gemma-3-12b',
+        model: 'gemma-3-12b-it',
+        thinkingLevel: ThinkingLevel.LOW,
+      };
     case 'neo-4':
       return {
         id: 'neo-4',
@@ -312,6 +382,19 @@ function getModelConfig(
         model: 'gemini-4-hydrogen',
         thinkingLevel: ThinkingLevel.MEDIUM,
       };
+    case 'flash-4':
+      return {
+        id: 'flash-4',
+        model: 'gemini-4-hydrogen',
+        thinkingLevel: ThinkingLevel.LOW,
+      };
+    case 'omni-flash-1.2':
+      return {
+        id: 'omni-flash-1.2',
+        model: 'gemini-omni-1.2-flash',
+        thinkingLevel: ThinkingLevel.MEDIUM,
+        isPaid: true,
+      };
     case 'hydrogen-4-fast':
       return {
         id: 'hydrogen-4-fast',
@@ -328,22 +411,68 @@ function getModelConfig(
   }
 }
 
+const modelCooldownUntil = new Map<string, { until: number; reason: '429' | '503' | '404' }>();
+
+function markModelCooldown(model: string, err: unknown): void {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota')) {
+    modelCooldownUntil.set(model, { until: Date.now() + 300_000, reason: '429' });
+  } else if (/\b404\b/.test(msg) || msg.includes('not found')) {
+    modelCooldownUntil.set(model, { until: Date.now() + 600_000, reason: '404' });
+  } else if (msg.includes('503') || msg.includes('high demand') || msg.includes('unavailable') || msg.includes('overloaded')) {
+    modelCooldownUntil.set(model, { until: Date.now() + 30_000, reason: '503' });
+  }
+}
+
+function isModelInCooldown(model: string): boolean {
+  const entry = modelCooldownUntil.get(model);
+  if (!entry) return false;
+  if (Date.now() >= entry.until) {
+    modelCooldownUntil.delete(model);
+    return false;
+  }
+  return true;
+}
+
 function getFallbackChain(primary: ResolvedModelConfig): ResolvedModelConfig[] {
   const candidates: ResolvedModelConfig[] = [primary];
-  if (primary.model === 'gemini-4-neon' || primary.model === 'gemini-4-carbon') {
+  if (primary.model === 'gemini-omni-1.2-flash' || primary.model === 'gemini-3.8-live-extended-thinking') {
+    candidates.push(
+      { id: 'flash-3.8', model: 'gemini-3.8-flash', thinkingLevel: ThinkingLevel.LOW },
+      { id: 'flash-4', model: 'gemini-4-hydrogen', thinkingLevel: ThinkingLevel.LOW },
+      { id: 'flash-lite-3.1', model: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL },
+      { id: 'flash-4', model: 'gemini-2.5-flash', thinkingLevel: ThinkingLevel.LOW },
+      { id: 'flash-lite-3.1', model: 'gemini-2.5-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL }
+    );
+  } else if (primary.model === 'gemini-4-neon' || primary.model === 'gemini-4-carbon' || primary.model === 'gemini-4-argon') {
     candidates.push(
       { id: 'hydrogen-4-balanced', model: 'gemini-4-hydrogen', thinkingLevel: ThinkingLevel.MEDIUM },
-      { id: 'flash-lite-3.1', model: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL }
+      { id: 'flash-3.8', model: 'gemini-3.8-flash', thinkingLevel: ThinkingLevel.MEDIUM },
+      { id: 'flash-4', model: 'gemini-2.5-flash', thinkingLevel: ThinkingLevel.MEDIUM },
+      { id: 'flash-lite-3.1', model: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL },
+      { id: 'flash-lite-3.1', model: 'gemini-2.5-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL }
     );
-  } else if (primary.model === 'gemini-3.1-flash-lite') {
+  } else if (primary.model.startsWith('gemma-')) {
+    candidates.push(
+      ...(primary.model === 'gemma-3-27b-it'
+        ? [{ id: 'gemma-3-12b' as ModelChoiceId, model: 'gemma-3-12b-it', thinkingLevel: ThinkingLevel.LOW }]
+        : [{ id: 'gemma-3-27b' as ModelChoiceId, model: 'gemma-3-27b-it', thinkingLevel: ThinkingLevel.LOW }]),
+      { id: 'flash-lite-3.1', model: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL },
+      { id: 'flash-4', model: 'gemini-4-hydrogen', thinkingLevel: ThinkingLevel.LOW }
+    );
+  } else if (primary.model === 'gemini-3.1-flash-lite' || primary.model === 'gemini-3.8-flash') {
     candidates.push(
       { id: 'hydrogen-4-fast', model: 'gemini-4-hydrogen', thinkingLevel: ThinkingLevel.LOW },
-      { id: 'hydrogen-4-balanced', model: 'gemini-4-hydrogen', thinkingLevel: ThinkingLevel.MEDIUM }
+      { id: 'flash-lite-3.1', model: 'gemini-2.5-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL },
+      { id: 'flash-4', model: 'gemini-2.5-flash', thinkingLevel: ThinkingLevel.LOW },
+      { id: 'flash-lite-3.1', model: 'gemini-3.5-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL }
     );
   } else {
     candidates.push(
+      { id: 'flash-3.8', model: 'gemini-3.8-flash', thinkingLevel: ThinkingLevel.LOW },
       { id: 'flash-lite-3.1', model: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL },
-      { id: 'hydrogen-4-balanced', model: 'gemini-4-hydrogen', thinkingLevel: ThinkingLevel.MEDIUM }
+      { id: 'flash-4', model: 'gemini-2.5-flash', thinkingLevel: ThinkingLevel.LOW },
+      { id: 'flash-lite-3.1', model: 'gemini-2.5-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL }
     );
   }
   const seen = new Set<string>();
@@ -358,18 +487,19 @@ function getFallbackChain(primary: ResolvedModelConfig): ResolvedModelConfig[] {
 function getFallbackConfig(primary: ResolvedModelConfig): ResolvedModelConfig {
   return getFallbackChain(primary)[1] || {
     id: 'flash-lite-3.1',
-    model: 'gemini-3.1-flash-lite',
+    model: 'gemini-2.5-flash-lite',
     thinkingLevel: ThinkingLevel.MINIMAL,
   };
 }
 
 function isBillingOrModelMissingError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const isQuota429 = msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota');
+  if (isQuota429) return false;
   return (
-    msg.includes('402') ||
-    msg.includes('404') ||
-    msg.includes('billing') ||
-    msg.includes('paid') ||
+    /\b402\b/.test(msg) ||
+    /\b404\b/.test(msg) ||
+    msg.includes('paid tier') ||
     msg.includes('not found')
   );
 }
@@ -382,10 +512,9 @@ function isDemandOrTransientError(err: unknown): boolean {
     msg.includes('500') ||
     msg.includes('502') ||
     msg.includes('504') ||
-    msg.includes('402') ||
-    msg.includes('404') ||
-    msg.includes('billing') ||
-    msg.includes('paid') ||
+    /\b402\b/.test(msg) ||
+    /\b404\b/.test(msg) ||
+    msg.includes('paid tier') ||
     msg.includes('quota') ||
     msg.includes('not found') ||
     msg.includes('resource_exhausted') ||
@@ -414,7 +543,7 @@ function isDemandOrTransientError(err: unknown): boolean {
 
 function extractCleanErrorText(raw: string): string {
   let current = raw.trim();
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 4; i += 1) {
     if (!current.startsWith('{')) break;
     try {
       const parsed = JSON.parse(current) as {
@@ -446,28 +575,30 @@ function formatErrorMessage(err: unknown): { status: number; message: string } {
       message: 'The configured API key appears invalid. Please verify it in Settings > Secrets.',
     };
   }
-  if (lower.includes('billing') || lower.includes('402') || lower.includes('paid tier')) {
+  if (lower.includes('resource_exhausted') || lower.includes('429') || lower.includes('quota exceeded')) {
+    const modelMatch = /model:\s*([a-z0-9._-]+)/i.exec(clean);
+    const modelTag = modelMatch ? ` (${modelMatch[1]})` : '';
     return {
-      status: 402,
-      message: 'This paid model requires active Cloud billing on your Gemini project. Switch to Hydrogen 4 or enable Auto Fallback.',
+      status: 429,
+      message: `API quota / rate limit reached${modelTag}. Switch to Flash Lite, Auto, or Neo 4 (local Python AI with zero quota), or attach a billing-enabled key in Settings > Secrets.`,
     };
   }
-  if (lower.includes('permission_denied') || lower.includes('403')) {
+  if (/\b402\b/.test(lower) || lower.includes('paid tier') || lower.includes('requires active cloud billing')) {
+    return {
+      status: 402,
+      message: 'This paid model requires active Cloud billing on your Gemini project. Switch to Flash Lite / Auto or enable Auto Fallback.',
+    };
+  }
+  if (lower.includes('permission_denied') || /\b403\b/.test(lower)) {
     return {
       status: 403,
       message: 'Permission denied when reaching the model service. Check your API key or switch to a free-tier model.',
     };
   }
-  if (lower.includes('resource_exhausted') || lower.includes('429')) {
-    return {
-      status: 429,
-      message: 'Selected model is rate-limited right now. Try switching to another model in the top menu.',
-    };
-  }
   if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
     return {
       status: 503,
-      message: 'This model is experiencing a temporary spike in demand. Please retry or switch models in the top selector.',
+      message: 'Upstream model is experiencing temporary high demand. Retry, enable Auto Fallback, or switch to Neo 4.',
     };
   }
   if (lower.includes('gemini_api_key is not configured')) {
@@ -619,12 +750,12 @@ function executeCustomToolVm(
 function detectCreativeIntents(msgs: IncomingMessage[]): CreativeIntentProfile {
   const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
   const text = (lastUser?.text || '').toLowerCase();
-  const animation = /\b(animat|stopmotion|stop-motion|flipbook|webm|mp4|motion|walk cycle|bounce|clockwork|gear|pendulum|orbit|storyboard|camera cut|timeline|60fps)\b/.test(text);
-  const mathCurve = /\b(hilbert|dragon curve|koch|snowflake|lissajous|spirograph|rose curve|fibonacci|fractal|parametric|spiral|sine wave|fourier|epicycle|curve)\b/.test(text);
-  const pixel = /\b(pixel\s*art|sprite|8-bit|16-bit|tileset|dither|512x512|256x256|128x128|64x64|pixelated|aurora|stardust|voxel|crt)\b/.test(text);
+  const animation = /\b(animat|stopmotion|stop-motion|flipbook|webm|mp4|motion|walk cycle|bounce|clockwork|gear|pendulum|orbit|storyboard|camera cut|timeline|60fps|physics|hitbox|collision|gravity|kinetic|character|scene|landscape|sunset|cyberpunk|neon|demo|studio|draw|illustrat|render|art|particle|fireworks|explosion)\b/.test(text);
+  const mathCurve = /\b(hilbert|dragon curve|koch|snowflake|lissajous|spirograph|rose curve|fibonacci|fractal|parametric|spiral|sine wave|fourier|epicycle|curve|graph|plot|harmonic|wave|gradient|cardioid|lemniscate|phyllotaxis|butterfly)\b/.test(text);
+  const pixel = /\b(pixel\s*art|pixelart|sprite|8-bit|16-bit|tileset|dither|bayer|conic|512x512|256x256|128x128|64x64|pixelated|aurora|stardust|voxel|crt|hitbox|plasma|retro|arcade|isometric|shader)\b/.test(text);
   const blender = /\b(blender|cycles|eevee|bpy|\.blend|subsurf|boolean mesh)\b/.test(text);
-  const evo = /\b(evo|evo\/v1|3d animation|three\.?js.*motion|orbital 3d|three\.?js pbr)\b/.test(text);
-  const model3d = blender || evo || /\b(3d\s*model|blockbench|bbmodel|voxel|three\.?js|mesh|low-poly|minecraft|rigged model|glb|gltf|obj)\b/.test(text);
+  const evo = /\b(evo|evo\/v1|3d animation|3d scene|three\.?js.*motion|orbital 3d|three\.?js pbr|physics|hitbox|collision|wave surface|mobius|klein|helix|dna|hologram|crystal)\b/.test(text);
+  const model3d = blender || evo || /\b(3d\s*model|3d|blockbench|bbmodel|voxel|three\.?js|mesh|low-poly|minecraft|rigged model|glb|gltf|obj|physics|hitbox|terrain|sculpture|spaceship|robot)\b/.test(text);
   const explainer = /\b(explain|how does|diagram|chart|graph|quiz|flashcard|compare|breakdown|tutorial|lesson|visual)\b/.test(text);
   const hybrid = /\b(liquidmotion|liquid\s*motion|liquiddrop|liquid\s*drop|pixelmotion|pixel\s*motion|motiondrop|motion\s*drop|hybrid)\b/.test(text);
   return { animation, mathCurve, pixel, model3d, blender, explainer, hybrid, evo };
@@ -633,6 +764,7 @@ function detectCreativeIntents(msgs: IncomingMessage[]): CreativeIntentProfile {
 interface ChatPipelineParams {
   messages: IncomingMessage[];
   modelId?: ModelChoiceId;
+  neoMode?: 'llm' | 'rule';
   autoFallback?: boolean;
   systemInstruction?: string;
   safetyFilters?: IncomingSafetyFilters;
@@ -691,7 +823,281 @@ function getMingwGxxBinary(): string | null {
   return null;
 }
 
-async function runNeo4Pipeline(params: ChatPipelineParams): Promise<void> {
+function getMemInfoStats(): {
+  totalRamMb: number;
+  freeRamMb: number;
+  usedRamMb: number;
+  swapTotalMb: number;
+  swapFreeMb: number;
+} {
+  const totalRamMb = Math.round(os.totalmem() / 1024 / 1024);
+  let freeRamMb = Math.round(os.freemem() / 1024 / 1024);
+  let swapTotalMb = 0;
+  let swapFreeMb = 0;
+  try {
+    if (fs.existsSync('/proc/meminfo')) {
+      const raw = fs.readFileSync('/proc/meminfo', 'utf8');
+      const parseKb = (key: string): number | null => {
+        const m = raw.match(new RegExp(`^${key}:\\s+(\\d+)\\s+kB`, 'm'));
+        return m ? Number(m[1]) : null;
+      };
+      const availKb = parseKb('MemAvailable');
+      const freeKb = parseKb('MemFree');
+      const sTotKb = parseKb('SwapTotal');
+      const sFreeKb = parseKb('SwapFree');
+      if (availKb !== null) freeRamMb = Math.round(availKb / 1024);
+      else if (freeKb !== null) freeRamMb = Math.round(freeKb / 1024);
+      if (sTotKb !== null) swapTotalMb = Math.round(sTotKb / 1024);
+      if (sFreeKb !== null) swapFreeMb = Math.round(sFreeKb / 1024);
+    }
+  } catch {
+    // Fallback to os.freemem
+  }
+  return {
+    totalRamMb,
+    freeRamMb,
+    usedRamMb: Math.max(0, totalRamMb - freeRamMb),
+    swapTotalMb,
+    swapFreeMb,
+  };
+}
+
+function getAvailableRamMb(): number {
+  return getMemInfoStats().freeRamMb;
+}
+
+function formatBytesHuman(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function listFolioBackups(): Array<{
+  filename: string;
+  sizeBytes: number;
+  sizeHuman: string;
+  createdAt: string;
+}> {
+  try {
+    if (!fs.existsSync(FOLIO_BACKUPS_DIR)) return [];
+    const entries = fs.readdirSync(FOLIO_BACKUPS_DIR);
+    return entries
+      .filter((name) => name.endsWith('.tar.gz'))
+      .map((filename) => {
+        const full = path.join(FOLIO_BACKUPS_DIR, filename);
+        const st = fs.statSync(full);
+        return {
+          filename,
+          sizeBytes: st.size,
+          sizeHuman: formatBytesHuman(st.size),
+          createdAt: st.mtime.toISOString(),
+          mtimeMs: st.mtimeMs,
+        };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .map(({ mtimeMs: _m, ...rest }) => rest);
+  } catch {
+    return [];
+  }
+}
+
+async function createFolioBackup(label?: string): Promise<{
+  ok: boolean;
+  filename?: string;
+  sizeBytes?: number;
+  sizeHuman?: string;
+  createdAt?: string;
+  error?: string;
+}> {
+  try {
+    await fs.promises.mkdir(FOLIO_BACKUPS_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const cleanLabel = (label || 'snapshot')
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32);
+    const filename = `folio-backup-${stamp}${cleanLabel ? `-${cleanLabel}` : ''}.tar.gz`;
+    const outPath = path.join(FOLIO_BACKUPS_DIR, filename);
+
+    const exitCode = await new Promise<number>((resolve) => {
+      const cp = spawn(
+        'tar',
+        [
+          '--exclude=./node_modules',
+          '--exclude=./dist',
+          '--exclude=./.git',
+          '--exclude=./.folio-data',
+          '-czf',
+          outPath,
+          '-C',
+          __dirname,
+          '.',
+        ],
+        { stdio: 'ignore' }
+      );
+      cp.on('close', (c) => resolve(c ?? 1));
+      cp.on('error', () => resolve(1));
+    });
+
+    if (exitCode !== 0 || !fs.existsSync(outPath)) {
+      return { ok: false, error: 'Failed to create tar.gz backup archive.' };
+    }
+    const st = await fs.promises.stat(outPath);
+    return {
+      ok: true,
+      filename,
+      sizeBytes: st.size,
+      sizeHuman: formatBytesHuman(st.size),
+      createdAt: st.mtime.toISOString(),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Backup creation failed.' };
+  }
+}
+
+function getSystemHealthSnapshot() {
+  const mem = getMemInfoStats();
+  const rssMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+
+  let diskTotalGb = 0;
+  let diskFreeGb = 0;
+  let diskUsedGb = 0;
+  try {
+    const stat = fs.statfsSync(__dirname);
+    const bsize = Number(stat.bsize);
+    const blocks = Number(stat.blocks);
+    const bavail = Number(stat.bavail);
+    diskTotalGb = Number(((blocks * bsize) / 1024 ** 3).toFixed(2));
+    diskFreeGb = Number(((bavail * bsize) / 1024 ** 3).toFixed(2));
+    diskUsedGb = Number(Math.max(0, diskTotalGb - diskFreeGb).toFixed(2));
+  } catch {
+    // Ignore statfs unavailability
+  }
+
+  const statSize = (p: string): number => {
+    try {
+      return fs.existsSync(p) ? fs.statSync(p).size : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const docsDbSize = statSize(path.join(FOLIO_NEO4_DIR, 'folio_docs.db'));
+  const knowledgeDbSize = statSize(path.join(FOLIO_NEO4_DIR, 'knowledge.db'));
+  const shardsDir = path.join(FOLIO_NEO4_DIR, 'shards');
+  let shardFiles: string[] = [];
+  let shardsTotalBytes = 0;
+  try {
+    if (fs.existsSync(shardsDir)) {
+      shardFiles = fs.readdirSync(shardsDir).filter((f) => f.endsWith('.db')).sort();
+      for (const f of shardFiles) {
+        shardsTotalBytes += statSize(path.join(shardsDir, f));
+      }
+    }
+  } catch {
+    // Ignore shard dir scan error
+  }
+
+  const modelsDir = path.resolve(__dirname, '.folio-data', 'models');
+  const llamaBinCandidates = [
+    path.join(FOLIO_BIN_DIR, 'llama-completion'),
+    path.join(FOLIO_BIN_DIR, 'llama-cli'),
+    '/usr/local/bin/llama-completion',
+    '/usr/local/bin/llama-cli',
+  ];
+  const llamaBinPath = llamaBinCandidates.find((p) => fs.existsSync(p)) || null;
+  const availableModels: Array<{ name: string; sizeBytes: number; sizeHuman: string }> = [];
+  if (fs.existsSync(modelsDir)) {
+    const ggufFiles = fs.readdirSync(modelsDir).filter((f) => f.endsWith('.gguf')).sort();
+    for (const f of ggufFiles) {
+      const sz = statSize(path.join(modelsDir, f));
+      availableModels.push({ name: f, sizeBytes: sz, sizeHuman: formatBytesHuman(sz) });
+    }
+  }
+
+  let ggufModelPath: string | null =
+    process.env.FOLIO_TINY_LLM_MODEL && fs.existsSync(process.env.FOLIO_TINY_LLM_MODEL)
+      ? process.env.FOLIO_TINY_LLM_MODEL
+      : null;
+  if (!ggufModelPath && fs.existsSync(modelsDir)) {
+    const m15b = path.join(modelsDir, 'qwen2.5-1.5b-instruct-q4_k_m.gguf');
+    const m05b = path.join(modelsDir, 'qwen2.5-0.5b-instruct-q4_k_m.gguf');
+    if (mem.freeRamMb >= 1650 && fs.existsSync(m15b)) {
+      ggufModelPath = m15b;
+    } else if (fs.existsSync(m05b)) {
+      ggufModelPath = m05b;
+    } else if (availableModels.length > 0) {
+      ggufModelPath = path.join(modelsDir, availableModels[0].name);
+    }
+  }
+  const ggufSizeBytes = ggufModelPath ? statSize(ggufModelPath) : 0;
+
+  const remoteUrl = (process.env.FOLIO_REMOTE_LLM_URL || '').trim();
+  const remoteModel = (process.env.FOLIO_REMOTE_LLM_MODEL || '').trim() || (remoteUrl ? 'qwen2.5:14b' : null);
+
+  const canRunHeavyTools = mem.freeRamMb >= 450;
+  const canRunBlender = mem.freeRamMb >= 650;
+  const canRunTinyLlm = mem.freeRamMb >= 1100;
+  const ramStatus: 'healthy' | 'tight' | 'critical' =
+    mem.freeRamMb < 450 ? 'critical' : mem.freeRamMb < 900 ? 'tight' : 'healthy';
+
+  return {
+    version: FOLIO_CURRENT_VERSION,
+    ram: {
+      ...mem,
+      rssMb,
+      status: ramStatus,
+    },
+    disk: {
+      totalGb: diskTotalGb,
+      freeGb: diskFreeGb,
+      usedGb: diskUsedGb,
+    },
+    thresholds: {
+      canRunHeavyTools,
+      canRunBlender,
+      canRunTinyLlm,
+      heavyToolsMinFreeMb: 450,
+      blenderMinFreeMb: 650,
+      tinyLlmMinFreeMb: 1100,
+    },
+    tinyLocalLlm: {
+      installed: Boolean(llamaBinPath && ggufModelPath),
+      binaryPath: llamaBinPath,
+      modelName: ggufModelPath ? path.basename(ggufModelPath) : null,
+      modelSizeBytes: ggufSizeBytes,
+      modelSizeHuman: ggufSizeBytes > 0 ? formatBytesHuman(ggufSizeBytes) : null,
+      availableModels,
+    },
+    remoteLlm: {
+      configured: Boolean(remoteUrl),
+      model: remoteModel,
+    },
+    knowledgeBase: {
+      docsDbBytes: docsDbSize,
+      docsDbHuman: formatBytesHuman(docsDbSize),
+      docsIndexed: docsDbSize > 0,
+      knowledgeDbBytes: knowledgeDbSize,
+      knowledgeDbHuman: formatBytesHuman(knowledgeDbSize),
+      shardCount: shardFiles.length,
+      shardsTotalBytes,
+      shardsTotalHuman: formatBytesHuman(shardsTotalBytes),
+    },
+    toolchains: {
+      blenderInstalled: Boolean(getBlenderBinary()),
+      godotInstalled: Boolean(getGodotBinary()),
+      cmakeInstalled: Boolean(getCmakeBinary()),
+      kotlinInstalled: Boolean(getKotlinBinary()),
+      ghInstalled: Boolean(getGitHubCliBinary()),
+      ffmpegInstalled: fs.existsSync('/usr/bin/ffmpeg') || fs.existsSync('/usr/local/bin/ffmpeg'),
+    },
+    backupsCount: listFolioBackups().length,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function runNeo4Pipeline(params: ChatPipelineParams, fallbackFrom?: ModelChoiceId): Promise<void> {
   const {
     messages,
     systemInstruction,
@@ -703,7 +1109,11 @@ async function runNeo4Pipeline(params: ChatPipelineParams): Promise<void> {
   } = params;
 
   const startTime = Date.now();
-  onEvent({ type: 'meta', modelId: 'neo-4' });
+  onEvent({
+    type: 'meta',
+    modelId: 'neo-4',
+    ...(fallbackFrom ? { fallbackFrom } : {}),
+  });
 
   const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
   const prompt = lastUserMsg?.text || 'Hello Neo';
@@ -718,9 +1128,21 @@ async function runNeo4Pipeline(params: ChatPipelineParams): Promise<void> {
     mode: 'chat',
     prompt,
     messages: messages.map((m) => ({ role: m.role, text: m.text })),
+    neoMode: params.neoMode || 'llm',
+    neo_mode: params.neoMode || 'llm',
+    thinkingMode: thinkingMode || 'medium',
     thinking_mode: thinkingMode || 'medium',
+    semanticEngineEnabled: semanticEngineEnabled !== false,
     semantic_engine: semanticEngineEnabled !== false,
+    entropicAuditorEnabled: Boolean(params.entropicAuditorEnabled),
+    metaScriptingEnabled: Boolean(params.metaScriptingEnabled),
+    immersivePureCode: Boolean(params.immersivePureCode),
+    safetyFilters: params.safetyFilters || {},
+    systemInstruction: systemInstruction || '',
     system_instruction: systemInstruction || '',
+    customTools: (params.customTools || [])
+      .filter((t) => t.enabled)
+      .map((t) => ({ name: t.name, description: t.description })),
   };
 
   const pyProcess = spawn('python3', [engineScript, '--json'], {
@@ -862,61 +1284,58 @@ async function runFolioChatPipeline(params: ChatPipelineParams): Promise<void> {
   });
 
   const STOP_MOTION_CAPABILITY_GUIDE = `
-If the user asks you to create, write, code, or animate a stop-motion animation, mathematical fractal/parametric curve animation, or production storyboard, output a fenced \`\`\`stopmotion block containing valid JSON using **Stop Motion v3 (\`"format": "stopmotion/v3"\`)** (or v2):
-- **Timeline & Duration Conservation**: Supports \`1..60fps\` and \`durationSec\` (from \`0.5s\` up to \`600s\` / \`216,000\` logical frames @ 60fps; FPS switches preserve total seconds automatically).
-- **Production Storyboard (\`"shots"\`)**: Array of shots with \`{ "name": "Intro", "start": 0, "end": 0.4, "cameraCut": "wide"|"medium"|"closeup"|"dutch"|"overhead", "cameraAngle": -4, "uiAngle": 0, "trackingTarget": "subject_id", "effect": "vignette"|"letterbox"|"scanlines"|"bloom", "camera": { "x": 400, "y": 225, "zoom": 1.15 } }\`.
-- **bpy-Style Grouping & Referencing**: \`"groups": { "wheel": "<circle .../>" }\`, layer \`"idLink": "wheel"\` to instance reusable components cleanly with transforms.
-- **Extended Motion, Kinematics & Brush Engine**:
-  - Layers support \`motion\` (\`x\`, \`y\`, \`rotation\`, \`scale\`, \`scaleX\`, \`scaleY\`, \`opacity\`, \`skewX\`, \`skewY\`, \`parallax\`, \`depth\`), \`follow\` (\`{ "target": "id", "offsetX": 12, "offsetY": -8, "stiffness": 0.4 }\`), \`axisDivision\` (\`{ "rows": 3, "cols": 3 }\`), \`lining\` (\`{ "color": "#fff", "width": 2, "dash": "6 4" }\`), \`pulse\` (\`{ "minOpacity": 0.65, "maxOpacity": 1, "freqHz": 2 }\`), and \`cssStyles\` / \`cssFilter\`.
-  - Procedural vector brushes (\`"brush": { "type": "airbrush"|"neon"|"watercolor"|"pixel", "points": [[x,y],...], "color": "#38bdf8", "size": 12, "drawProgress": "t" }\`), inline \`pixelTexture\` (\`4x4\`–\`512x512\` pixelart spec rendered cleanly as SVG data-image), \`assetRef\` (stock/URL image), \`threeD\` cube/wireframe/extrude projection, and native \`"curve"\` (\`hilbert\`|\`dragon\`|\`koch\`|\`lissajous\`|\`spirograph\`|\`rose\`|\`spiral\`).
-  - Math helpers & easings: \`t, i, n, w, h, cx, cy, PI, TAU, sin, cos, tan, sinh, cosh, tanh, hypot, atan2, sqrt, exp, pow, lerp, clamp, pingpong, bounce, wave, smoothstep, easeInOut, easeOutExpo, easeOutBounce, backOut, elasticOut, step, noise\`.
-  - Built-in \`<defs>\`: \`#studioDropShadow\`, \`#softDropShadow\`, \`#softGlow\`, \`#wetGlazePink\`, \`#wetGlazeCaramel\`, \`#wetGlazeCyan\`, \`#metallicGold\`, \`#metallicSteel\`, \`#glassSphere\`, \`#tactileOrganicNoise\`, \`#tactileDoughWarp\`, \`#tactileSoftEdge\`.
-- **Pure-Math Audio Track (\`"audio"\`)**: \`"audio": { "mode": "math", "formula": "sin(TAU * 220 * t) * exp(-t * 2) * 0.3", "durationSec": 3 }\` (or \`"preset": "ambient_chime"|"retro_pulse"|"bass_swell"|"sci_fi_arp"|"clockwork_tick"\`) — synthesized into crystal-clear WebAudio & baked into FFmpeg WebM/MP4 exports!`;
+STUDIO-GRADE STOP MOTION v3 (\`\`\`stopmotion — \`"format": "stopmotion/v3"\`):
+ALWAYS match the artistic richness of the built-in Studio Demos (multi-layer atmospheric backdrops, depth parallax, dynamic squash-and-stretch, Marker Trick specular arcs, particle emitters, and synced WebAudio — NEVER emit bare 1-shape stubs):
+- **Layered Composition**: Combine \`"backdrop"\` (sky gradient + horizon + atmospheric stars/glow), 5–14 rich \`"layers"\` with depth \`"parallax"\`, dynamic \`"shadow": { "type": "ground", "groundY": 380, "rx": 48, "ry": 10 }\`, \`"effect": "crt"|"cyberpunk"|"sepia"|"noir"\`, and built-in studio \`<defs>\`:
+  - Glazes & Metals: \`url(#wetGlazeCyan)\`, \`url(#wetGlazePink)\`, \`url(#wetGlazeCaramel)\`, \`url(#wetGlazeEmerald)\`, \`url(#wetGlazePurple)\`, \`url(#wetGlazeCrimson)\`, \`url(#wetGlazeObsidian)\`, \`url(#metallicGold)\`, \`url(#metallicSteel)\`, \`url(#metallicCopper)\`, \`url(#metallicChrome)\`, \`url(#metallicRoseGold)\`, \`url(#iridescentHologram)\`, \`url(#glassSphere)\`, \`url(#sunsetSkyGrad)\`, \`url(#cyberNightGrad)\`, \`url(#auroraRibbonGrad)\`, \`url(#lavaMagmaGrad)\`.
+  - Filters: \`url(#softGlow)\`, \`url(#neonBloom)\`, \`url(#tactileDoughWarp)\`, \`url(#paperGrain)\`, \`url(#claySculpt)\`, \`url(#watercolorBleed)\`, \`url(#motionBlurX)\`, \`url(#motionBlurY)\`, \`url(#frostedGlass)\`, \`url(#embossBevel)\`, \`url(#inkOutline)\`, \`url(#glitchSlice)\`.
+- **Brushes & 3D Shapes**: Vector strokes with \`"brush"\` (\`spray|charcoal|ribbon|sparkle|doubleline|stipple|neon|chalk|watercolor|marker|calligraphy|dashed|glow|pixel|rough|solid\`), procedural \`"particles"\` (\`circle|star|spark|snow|smoke|confetti|bubble\`), and 3D primitives \`"threeD"\` (\`sphere|cube|torus|cylinder|octahedron|icosahedron|cone|ring|capsule|prism|gear\`).
+- **Motion, Easing & Physics**: 36 unified easings + \`motion\` tags (\`x, y, rotation, scale, scaleX, scaleY, sway, bob, pulse, orbit, shake, flicker, spiral, bezierPath, trail\`), 2D rigid-body \`"physics"\` + \`"hitbox"\`, and 120+ unified math functions (\`sin, cos, tan, sinh, cosh, tanh, sinc, clamp, saturate, lerp, remap, smoothstep, smootherstep, gain, bias, impulse, gaussian, sigmoid, pingpong, sawtooth, triangle, square, pwm, noise, perlin1d, fbm, turbulence, ridges, voronoi1d, gravity, projectilex, projectiley, bouncepos, spring, dampedsine, pendulum, orbitx, orbity, lissajousx, lissajousy, aabbhit, circlehit, box3dhit, spherehit\`).
+- **Curves & Storyboard/Audio**: 21 math \`"curve"\` generators (\`hilbert, dragon, koch, lissajous, spirograph, rose, spiral, butterfly, cardioid, lemniscate, astroid, hypocycloid, epicycloid, fermat, archimedes, phyllotaxis, sinewave, fourier, bezier, catmull, starpolygon, graph\`), \`"storyboard"\` cameraCuts (\`wide, medium, closeup, dutch, overhead, orbit, zoomIn, zoomOut, panLeft, panRight, shake, tilt\`) + \`"uiAngle"\` (\`fpsBadge, reticle, letterbox\`), and \`"audio"\` with 20 presets (\`ambient_chime, sci_fi_arp, cyberpunk_arp, retro_8bit, crystal_bells, deep_drone, arcade_jump, laser_pulse, rain_noise, heartbeat, lofi_chord, quantum_pad, warp_riser, marimba, orchestral_brass, bounce, chimes, synth_pulse, bass_groove, glitch\`) or custom AST \`formula\` (\`fm, pm, ringmod, lfo, chorus, vibrato, tremolo, bitcrush, fold, softclip, midi2hz, chord3, chord4, pink, white\`).`;
 
   const PIXEL_ART_CAPABILITY_GUIDE = `
-If the user asks you to create, draw, or code pixel art, retro sprites, or high-resolution scenes up to **512×512**, output a single fenced \`\`\`pixelart block using **Pixel Engine v3 (\`"format": "pixelart/v3"\`)**:
-- **Canvas Size**: Up to \`512×512\`! Always use \`gradients\`, \`draw\` vector-to-pixel ops, or \`rle\` instead of huge raw ASCII grids at 128–512px.
-- **Gradients & Effects**: \`linear\`/\`radial\` gradients with \`dither: "none"|"bayer4"|"checker"\`; procedural \`draw\` ops: \`fill\`, \`rect\`, \`circle\`, \`ellipse\`, \`line\`, \`polygon\`, \`noise\`, \`pset\`, \`gradient\`, **\`aurora\`** (flowing spectral northern lights), **\`stardust\`** (twinkling starfield), **\`box3d\`** / **\`voxel\`** / **\`cube\`** (shaded 3D pixel isometric/perspective cube), and **\`dropshadow\`** (clean pixel-offset shadow).
-- **Post-Processing Shaders (\`"shaders"\`)**: Array of \`"vignette"\`, \`"scanline"\`, \`"crt"\`, \`"chromatic"\`, \`"glow"\`, \`"posterize"\`.`;
+STUDIO-GRADE PIXEL ENGINE v3 (\`\`\`pixelart — \`"format": "pixelart/v3"\`):
+ALWAYS match Studio Demo fidelity (multi-stop dithered gradients, layered procedural depth ops, specular highlights, and post shaders — NEVER emit blank squares or tiny 8×8 blobs):
+- **Canvas Size & Named Palettes**: Up to \`512×512\` (recommend \`64×64\` or \`128×128\` with \`frameCount: 16..24\`). Accepts explicit palette dicts/arrays OR named presets (\`"palette": "cyberpunk"|"pico8"|"endesga32"|"gameboy"|"sweetie16"|"fantasy24"|"synthwave"|"lava"|"ice"|"pastel"|"noir"|"forest"|"gold"\`).
+- **Gradients & 30+ Procedural Ops** (all accept math expressions with 120+ functions, \`opacity\`, \`blendMode: "normal"|"add"|"multiply"|"screen"|"overlay"\`, \`visibleFrom\`, \`visibleTo\`):
+  - \`gradients\`: \`linear\`, \`radial\`, \`conic\`, \`diamond\`, \`spiral\`, \`noise\` with \`dither: "bayer4"|"bayer8"|"bayer2"|"checker"|"halftone"\`.
+  - \`backdrop\` & \`draw\` ops: \`gradient\`, \`aurora\`, \`stardust\`/\`particles\`, \`plasma\`, \`water\`/\`waves\`, \`fire\`/\`flame\`, \`rain\`, \`snow\`, \`lightning\`/\`bolt\`, \`graph\`/\`plot\`, \`sphere3d\` (Phong-shaded sphere), \`box3d\`, \`pyramid3d\`, \`torus3d\`, \`ring\`, \`arc\`, \`wedge\`, \`star\`, \`diamond\`, \`hexagon\`, \`regularpoly\`, \`roundrect\`, \`capsule\`, \`bezier\`, \`checker\`, \`grid\`, \`scanlines\`, \`dropshadow\`, \`specular\`, \`text\`/\`bitmaptext\` (5×7 pixel font), \`sprite\`/\`tile\`, \`mirror\`, \`outline\`, \`physicsball\`, \`physicsbox\`, \`hitbox\`, \`circle\`, \`ellipse\`, \`rect\`, \`polygon\`, \`line\`, \`pset\`.
+- **18 Post Shaders**: \`"shaders": [{ "type": "vignette"|"scanline"|"crt"|"chromatic"|"glow"|"bloom"|"posterize"|"dither"|"outline"|"halftone"|"sepia"|"invert"|"pixelate"|"glitch"|"emboss"|"edge"|"tint"|"duotone", "intensity": 0.45 }]\`.`;
 
   const HYBRID_ENGINE_CAPABILITY_GUIDE = `
-FOLIO v(OXYGEN) CROSS-ENGINE HYBRID FORMATS (use when blending engines cleanly in one block):
-- \`\`\`liquidmotion — Animated video mixing a Pixel v3 background/sprite stage with smooth Stop Motion v3 vector foreground layers, storyboard cuts & math audio: \`{ "format": "liquidmotion/v1", "title": "...", "fps": 24, "durationSec": 4, "width": 800, "height": 450, "pixelLayer": <pixelart/v3>, "motionLayers": [...], "audio": {...} }\`.
-- \`\`\`liquiddrop — High-res still visual blending layered Pixel v3 textures/gradients with clean vector SVG overlays & soft shadows: \`{ "format": "liquiddrop/v1", "title": "...", "width": 800, "height": 450, "pixelLayer": <pixelart/v3>, "svg": "<g>...</g>" }\`.
-- \`\`\`pixelmotion — Animates Pixel Engine v3 frames along a Stop Motion v3 motion curve/camera with math audio synthesis -> renders to playable video: \`{ "format": "pixelmotion/v1", "title": "...", "fps": 24, "durationSec": 4, "width": 800, "height": 450, "pixelArt": <pixelart/v3>, "motion": { "x": "...", "y": "...", "scale": "..." }, "audio": {...} }\`.
-- \`\`\`motiondrop — Crisp single-frame 3D-lit / Three.js-style directional rim-light & drop-shadow hero still paired with pixel textures: \`{ "format": "motiondrop/v1", "title": "...", "width": 800, "height": 450, "lighting": { "azimuth": 35, "elevation": 48, "rimColor": "#38bdf8" }, "pixelLayer": <pixelart/v3>, "svg": "<g>...</g>" }\`.`;
+FOLIO v4.1 (Folio Zero) CROSS-ENGINE HYBRID FORMATS:
+Supports \`\`\`liquidmotion, \`\`\`liquiddrop, \`\`\`pixelmotion, and \`\`\`motiondrop with full cross-engine blending (\`pixelBlendMode\`, \`pixelOpacity\`, \`pixelScale\`, \`particles\`, \`lighting.rimColor\`, \`letterbox\`, \`frameOverlay\`, \`postFilter: "vignette"|"bloom"|"crt"|"sepia"|"noir"|"cyberpunk"\`), plus full Stop Motion v3 layers, Storyboard camera cuts, and Math Audio synthesis.`;
 
   const EVO_ENGINE_CAPABILITY_GUIDE = `
-EVO 3D ENGINE (\`\`\`evo — \`"format": "evo/v1"\`):
-When asked for real-time 3D PBR motion, Three.js procedural animation using Liquid Motion math, or EVO 3D scenes, output a fenced \`\`\`evo JSON block:
-- Top-level fields: \`"format": "evo/v1"\`, \`"title": "..."\`, \`"fps": 30\`, \`"durationSec": 6\`, \`"background": "#090d16"\`, optional \`"pixelLayer": <pixelart/v3 backdrop/texture>\`, \`"groups": { "ring": { ... } }\`, \`"nodes": [...]\` (with \`type: "box"|"sphere"|"torus"|"torusKnot"|"cylinder"|"cone"|"icosahedron"|"octahedron"|"ring"|"plane"|"capsule"|"group"\`, PBR \`material: { color, metalness, roughness, emissive, emissiveIntensity, opacity, wireframe }\`, \`idLink\`, \`repeat\`, \`follow\`, \`keyframes\`, and Liquid Motion expressions in \`motion\`: \`x, y, z, rx, ry, rz, scale, scaleX, scaleY, scaleZ, opacity\` using \`t, u, i, n, sec, sin, cos, lerp, pingpong, smoothstep, backOut, elasticOut\`), \`"storyboard": { "shots": [...] }\` damped camera cuts (\`position\`, \`target\`, \`fov\`), and pure-math \`"audio": { "mode": "math"|"preset", "formula"|"preset" }\`.`;
+STUDIO-GRADE EVO 3D ENGINE (\`\`\`evo — \`"format": "evo/v1"\`):
+ALWAYS build rich multi-node PBR scenes matching the Studio Demos (never single bare cubes):
+- **Environments & Atmosphere**: \`"environment": "studio"|"neon"|"sunset"|"obsidian"|"void"|"cyberpunk"|"arctic"|"desert"|"cosmic"|"forest"|"vaporwave"|"midnight"|"goldenHour"\`, \`"fog": { "color", "density" }\`, \`"starfield": true|320\`, \`"exposure": 1.15\`, \`"camera": { "fov", "position", "target", "autoRotate", "autoRotateSpeed" }\`.
+- **29 Geometries**: \`box, sphere, torus, torusKnot, cylinder, cone, icosahedron, octahedron, dodecahedron, tetrahedron, prism, pyramid, helix, mobius, klein, lathe, gear, star3d, voxelGrid, particles3d, axes3d, wireCube, ring, plane, capsule, graph, surface, curve, group\`.
+- **14 PBR Material Presets & Tags**: \`material.preset\`: \`glass|chrome|gold|neon|hologram|clay|toon|carbon|obsidian|lava|ice|emerald|copper|pearl\`, plus \`gradient: { colors, axis }\`, \`iridescence\`, \`sheen\`, \`flatShading\`, \`blending\`, \`emissivePulse\`, \`usePixelTexture\`.
+- **Motion, Keyframes & Physics**: 120+ math funcs & 36 easings; \`motion\` (\`x, y, z, rx, ry, rz, spinX, spinY, spinZ, bob, waveY, bounceAmp, sway, orbit, orbitY, orbitX, lissajous, spiral, pulse\`), \`repeat\`, \`follow\`, rigid-body \`physics\` (\`velocity, gravity, drag, attractor, restitution, floorY, walls\`) + \`hitbox\`, \`storyboard.shots\`, and \`audio\`.`;
 
   const MODEL_ENGINE_CAPABILITY_GUIDE = `
-For 3D scenes, voxel characters, Blockbench models, or studio-grade Blender procedural 3D assets:
-- **EVO 3D (\`\`\`evo)**: Three.js PBR real-time 3D motion using Liquid Motion expressions, keyframes, storyboard camera cuts, and WebAudio math synthesis.
-- **Three.js (\`\`\`threejs)**: Self-contained Three.js scene (JSON primitives or clean JS scene script).
-- **Blockbench (\`\`\`bbmodel)**: Valid Blockbench JSON (\`"elements"\` cubes, \`"outliner"\` hierarchical bones, base64 pixel \`"textures"\`, keyframed \`"animations"\`).
-- **Voxels (\`\`\`voxels / json)**: Array \`"voxels": [{"x":0,"y":0,"z":0,"color":"#..."}]\` auto-framed in 3D.
-- **Headless Blender CLI (\`blender_cli\`)**: Blender 3.4.1 (with patched \`np.bool\` NumPy compatibility, \`bmesh\`, \`PIL\`, \`scipy\`, \`requests\`, and **Draco mesh compression** \`/usr/lib/libextern_draco.so\`) is installed! When asked for complex 3D meshes, Draco-compressed \`.glb\` exports (\`export_draco_mesh_compression_enable=True\`), or studio Cycles renders, execute a \`bpy\` Python script via \`blender_cli\`. Use \`CYCLES\`, \`CPU\`, \`use_denoising = False\`.`;
+STUDIO-GRADE 3D ENGINE / MODEL PIPELINES:
+- **EVO 3D (\`\`\`evo)**: Full PBR 3D motion (29 geometries, 14 material presets, 13 environments, rigid-body physics/attractor/hitboxes, storyboard camera cuts, WebAudio).
+- **Three.js (\`\`\`threejs)**: Structured JSON with 27 shapes (\`box, sphere, torus, torusKnot, cylinder, cone, icosahedron, dodecahedron, octahedron, tetrahedron, capsule, ring, plane, pyramid, prism, helix, mobius, gear, star, crystal, gridFloor, particleCloud, splineTube, terrain, dnaHelix, waveSurface, graphRibbon\`), 20 materials (\`pbr, glass, gold, chrome, copper, carbon, obsidian, lava, ice, emerald, hologram, iridescent, matte, clay, toon, neon, wireframe, normal, glassTinted, additiveGlow\`), 12 lighting presets (\`studio, sunset, cyberpunk, dramatic, matrix, vaporwave, noir, arctic, volcanic, emeraldForest, goldenHour, void\`), 17 animations (\`rotate, bounce, physicsBounce, pulse, breathing, float, orbit, figure8, lissajous, spiral, pendulum, wobble, spinX, spinZ, spring, explodeLoop, chaos\`), \`repeat\`, \`starfield\`, \`fogDensity\`, \`physics.drag/attractor\`, and \`hitbox\`.
+- **Blockbench (\`\`\`bbmodel)** & **Voxels (\`\`\`voxels)** & **Headless Blender CLI (\`blender_cli\`)**: Supported natively.`;
 
   const RICH_MEDIA_EXPLAINER_GUIDE = `
 When explaining concepts, giving tutorials, comparing data, or teaching:
 - **Inline Interactive Charts (\`\`\`chart)**: Valid JSON \`{ "type": "bar"|"line"|"area"|"pie"|"donut"|"scatter"|"radar", "title": "...", "xLabel": "...", "yLabel": "...", "labels": [...], "series": [{ "name": "...", "color": "#...", "data": [...] }] }\`.
 - **Inline Interactive Quizzes (\`\`\`quiz)**: Valid JSON \`{ "title": "...", "questions": [{ "question": "...", "options": [...], "correctIndex": 0, "hint": "...", "explanation": "..." }] }\`.
-- **Stock Media, GIFs & SVG Icons (\`stock_media_search\`)**: Call \`stock_media_search\` (\`kind: "all"|"icons"|"images"|"gifs"\`) for verified public Wikimedia Commons photos/diagrams/GIFs and Iconify SVG icons — never invent external image URLs!
-- **Multi-Format Code Blocks**: Standard code blocks display cleanly; visual blocks (\`evo\`, \`stopmotion\`, \`pixelart\`, \`liquidmotion\`, \`liquiddrop\`, \`pixelmotion\`, \`motiondrop\`, \`threejs\`, \`bbmodel\`, \`svg\`, \`chart\`, \`quiz\`) render live interactive viewers with code tucked cleanly behind Show Code.`;
+- **Stock Media, GIFs & SVG Icons (\`stock_media_search\`)**: Call \`stock_media_search\` (\`kind: "all"|"icons"|"images"|"gifs"\`) for verified public Wikimedia Commons photos/diagrams/GIFs and Iconify SVG icons — never invent external image URLs!`;
 
   const CREATIVE_ENGINE_PIPELINE_GUIDE = `
-CREATIVE ORCHESTRATOR & MULTI-PARSER COT PROTOCOL:
-When generating animations (\`evo\`, \`stopmotion\`), math curves (\`curve\`), pixel art (\`pixelart/v3\`), hybrids (\`liquidmotion\`|\`liquiddrop\`|\`pixelmotion\`|\`motiondrop\`), 3D/Blockbench models, Blender scripts, \`chart\`s, or \`quiz\`zes:
-1. Reason step-by-step first (camera cuts, coordinate bounds, contrast, easing physics, parent-child pivots, lighting, contact shadows, audio frequencies).
-2. Use mathematically exact procedural constructs (\`curve\`, \`gradients\`, \`draw\`, \`motion\`, \`audio.formula\`) rather than approximate hand-typed coordinates.
-3. Call \`validate_creative_code\` with \`kind\` (\`evo\` | \`stopmotion\` | \`pixelart\` | \`liquidmotion\` | \`liquiddrop\` | \`pixelmotion\` | \`motiondrop\` | \`bbmodel\` | \`chart\` | \`quiz\`) and JSON \`code\` before emitting your final answer so syntax, dimensions (up to 512×512 for pixelart, up to 216,000 frames @ 60fps for stopmotion), and schema bounds are verified.`;
+CREATIVE ORCHESTRATOR & STUDIO DEMO QUALITY PROTOCOL:
+Whenever generating \`stopmotion\`, \`pixelart\`, \`evo\`, \`threejs\`, \`liquidmotion\`, \`liquiddrop\`, \`pixelmotion\`, \`motiondrop\`, or \`bbmodel\`:
+1. Match **Engine Studio Demo quality** every single time — NEVER output minimal 1-primitive placeholders! Always compose multi-layered atmospheric backdrops, multi-stop gradients (\`gradient\`, \`bayer4/bayer8\`, \`wetGlaze*\`), dynamic contact shadows & Marker Trick specular highlights, smooth easing or physics kinematics, particle depth, storyboard camera framing, and matching math audio.
+2. Always call \`validate_creative_code\` before emitting your final JSON block.`;
 
   const COMPACT_STUDIO_CAPABILITY_SUMMARY = `
-FOLIO v(OXYGEN) RUNTIME OVERVIEW:
-- Visual & Audio Code Blocks supported inline: \`\`\`evo (3D PBR), \`\`\`stopmotion (v3), \`\`\`pixelart (up to 512px), \`\`\`liquidmotion / \`\`\`liquiddrop / \`\`\`pixelmotion / \`\`\`motiondrop (hybrids), \`\`\`threejs, \`\`\`bbmodel, \`\`\`chart, \`\`\`quiz, \`\`\`html / \`\`\`tsx (live preview + /sandbox/:id & https://name.com Domain Sim).
-- Tools available via function calling: GitHub & \`gh\` CLI, local workspace files/scripts, headless Blender CLI (\`blender_cli\`), \`stock_media_search\`, \`namecom_domain_sim\`, \`validate_creative_code\`, plus any active custom tools. Execute read-only tools immediately without asking confirmation.`;
+FOLIO ${FOLIO_CURRENT_VERSION} RUNTIME OVERVIEW:
+- Visual & Audio Code Blocks supported inline: \`\`\`evo (29 3D geometries + 14 PBR presets + physics/hitboxes), \`\`\`stopmotion (v3 + 16 vector brushes + 21 curves + 22 studio defs + 120 math funcs + 36 easings + 20 audio presets), \`\`\`pixelart (up to 512px + 30 procedural draw ops + 18 post shaders + named palettes + 5x7 bitmap font), \`\`\`liquidmotion / \`\`\`liquiddrop / \`\`\`pixelmotion / \`\`\`motiondrop (hybrids), \`\`\`threejs (27 shapes + 20 PBR materials + 12 lighting rigs + 17 animations), \`\`\`bbmodel, \`\`\`chart, \`\`\`quiz, \`\`\`html / \`\`\`tsx.
+- Tools: \`folio_docs_lookup\` (authoritative Folio Docs/SDK/CLI/Changelog search), GitHub & \`gh\` CLI, \`antigravity_cli\`, workspace files/scripts, \`blender_cli\` (with RAM watchdog & pure-Python OBJ fallback), \`stock_media_search\`, \`namecom_domain_sim\`, \`validate_creative_code\`.`;
 
   const ghCliPath = getGitHubCliBinary();
   const blenderBin = getBlenderBinary();
@@ -938,15 +1357,20 @@ FOLIO v(OXYGEN) RUNTIME OVERVIEW:
   ]);
 
   const hasFfmpeg = fs.existsSync('/usr/bin/ffmpeg') || fs.existsSync('/usr/local/bin/ffmpeg');
+  const godotBin = getGodotBinary();
+  const cmakeBin = getCmakeBinary();
+  const kotlincBin = getKotlinBinary();
   const LIVE_ENV_CONTEXT = `
 LIVE ENVIRONMENT STATE:
-- Engine: Folio v(OXYGEN)
+- Engine: ${FOLIO_CURRENT_VERSION} (Codename: Folio Core)
+- CURRENT ACTIVE VERSION (AUTHORITATIVE): ${FOLIO_CURRENT_VERSION}. You are running ${FOLIO_CURRENT_VERSION} (upgraded from v4.1 Folio Zero and v4.0 OXYGEN). Always confirm **${FOLIO_CURRENT_VERSION}** with Official TypeScript & Python SDKs, \`folio\` CLI, Disk-Sharded SQLite FTS5/BM25 Knowledge Base (\`folio_docs_lookup\`), 4 GB RAM Watchdog & Snapshot Backups, Flash 4 / Omni Flash 1.2 / Neo 4 Python rule AI, EVO 3D Engine, Stop Motion v3, and Pixel Engine v3.
+- Memory Watchdog: ${getAvailableRamMb()} MB free RAM (${getMemInfoStats().totalRamMb} MB total, swap ${getMemInfoStats().swapTotalMb} MB).
 - GitHub: ${
     ghUserSummary
       ? `CONNECTED as @${ghUserSummary.login}${ghUserSummary.name ? ` (${ghUserSummary.name})` : ''}`
       : 'NOT CONNECTED (public repo reads still work)'
   } | gh CLI: ${ghCliPath ? 'ready' : 'unavailable'}
-- Blender CLI: ${blenderBin ? 'Blender 3.4.1 (Draco + NumPy compat)' : 'unavailable'} | FFmpeg: ${hasFfmpeg ? 'ready' : 'unavailable'}
+- Toolchains: Antigravity CLI (ready) | Godot 4.3 (${godotBin ? 'ready' : 'unavailable'}) | CMake/Ninja (${cmakeBin ? 'ready' : 'unavailable'}) | Kotlin 2.0 (${kotlincBin ? 'ready' : 'unavailable'}) | Neo 4 Python Engine + Disk KB (ready) | Blender CLI (${blenderBin ? 'ready' : 'pure-Python OBJ fallback'}) | FFmpeg (${hasFfmpeg ? 'ready' : 'unavailable'})
 - Active Workspace "${activeWsId}": ${activeWsScan.files.length} file(s)${
     activeWsScan.files.length > 0
       ? ` (${activeWsScan.files
@@ -1005,6 +1429,22 @@ Write your substantive response strictly as clean, executable, well-commented co
   if (anyCreativeIntent) {
     conditionalGuides.push(CREATIVE_ENGINE_PIPELINE_GUIDE);
   }
+  const latestUserText =
+    [...messages].reverse().find((m) => m.role === 'user')?.text?.trim() || '';
+  if (
+    /\b(folio|sdk|cli|changelog|version|backup|ram|watchdog|blender|stopmotion|pixelart|evo|threejs|liquidmotion|liquiddrop|pixelmotion|motiondrop|neo\s*4|docs?|documentation|kb|shard)\b/i.test(
+      latestUserText
+    )
+  ) {
+    const docHits = searchFolioDocs(latestUserText, 2);
+    if (docHits.length > 0) {
+      const snippet = docHits
+        .map((d) => `### ${d.title} [${d.category}]\n${d.content.slice(0, 720)}`)
+        .join('\n\n')
+        .slice(0, 1600);
+      conditionalGuides.push(`FOLIO DOCUMENTATION CONTEXT (AUTHORITATIVE):\n${snippet}`);
+    }
+  }
 
   const trimmedSystem = systemInstruction?.trim();
   const capabilityGuides = [
@@ -1028,25 +1468,33 @@ Write your substantive response strictly as clean, executable, well-commented co
   const chatTools = [{ functionDeclarations: [...builtInDeclarations, ...customDeclarations] }];
 
   const resolveEffectiveThinkingLevel = (baseLevel: ThinkingLevel, targetModel: string): ThinkingLevel => {
+    const supportsMinimal =
+      targetModel === 'gemini-3.1-flash-lite' || targetModel === 'gemini-3.5-flash-lite';
+    let chosen = baseLevel;
     if (thinkingMode) {
-      return mapThinkingModeToLevel(thinkingMode, targetModel);
-    }
-    if (!anyCreativeIntent) return baseLevel;
-    if (targetModel === 'gemini-4-neon') {
-      return creativeIntents.blender || creativeIntents.hybrid || creativeIntents.mathCurve
-        ? ThinkingLevel.XHIGH
-        : baseLevel;
-    }
-    if (targetModel === 'gemini-4-carbon') {
-      return ThinkingLevel.HIGH;
-    }
-    if (baseLevel === ThinkingLevel.MINIMAL) {
-      if (targetModel === 'gemini-4-hydrogen' && (creativeIntents.blender || creativeIntents.mathCurve || creativeIntents.model3d)) {
-        return ThinkingLevel.MEDIUM;
+      chosen = mapThinkingModeToLevel(thinkingMode, targetModel);
+    } else if (anyCreativeIntent) {
+      if (targetModel === 'gemini-4-neon') {
+        chosen = creativeIntents.blender || creativeIntents.hybrid || creativeIntents.mathCurve
+          ? ThinkingLevel.XHIGH
+          : baseLevel;
+      } else if (targetModel === 'gemini-4-carbon') {
+        chosen = ThinkingLevel.HIGH;
+      } else if (baseLevel === ThinkingLevel.MINIMAL) {
+        if (targetModel === 'gemini-4-hydrogen' && (creativeIntents.blender || creativeIntents.mathCurve || creativeIntents.model3d)) {
+          chosen = ThinkingLevel.MEDIUM;
+        } else {
+          chosen = ThinkingLevel.LOW;
+        }
       }
+    }
+    if (!supportsMinimal && chosen === ThinkingLevel.MINIMAL) {
       return ThinkingLevel.LOW;
     }
-    return baseLevel;
+    if (targetModel !== 'gemini-4-neon' && targetModel !== 'gemini-4-hydrogen' && chosen === ThinkingLevel.XHIGH) {
+      return ThinkingLevel.HIGH;
+    }
+    return chosen;
   };
 
   const runModelStream = async (cfg: ResolvedModelConfig, hasFallbackCandidate: boolean) => {
@@ -1078,6 +1526,239 @@ Write your substantive response strictly as clean, executable, well-commented co
       : 55_000;
     const interChunkTimeoutMs = 45_000;
 
+    if (cfg.model === 'gemini-omni-1.2-flash') {
+      const omniPrompt = messages
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`)
+        .join('\n\n');
+      const interaction = await ai.interactions.create({
+        model: 'gemini-omni-1.2-flash',
+        input: omniPrompt,
+        system_instruction: effectiveSystemInstruction,
+        generation_config: {
+          thinking_level:
+            effectiveThinkingLevel === ThinkingLevel.LOW
+              ? 'low'
+              : effectiveThinkingLevel === ThinkingLevel.HIGH
+              ? 'high'
+              : 'medium',
+        },
+      });
+      emitMetaOnce();
+      let fullText = '';
+      if (Array.isArray(interaction.steps)) {
+        for (const step of interaction.steps) {
+          if (step.type === 'thought' && Array.isArray(step.summary)) {
+            const th = step.summary
+              .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+              .join('');
+            if (th) onEvent({ type: 'thought', text: th });
+          } else if (step.type === 'model_output' && Array.isArray(step.content)) {
+            for (const c of step.content) {
+              if (c.type === 'text' && c.text) fullText += c.text;
+            }
+          }
+        }
+      }
+      if (!fullText && interaction.output_text) {
+        fullText = interaction.output_text;
+      }
+      const chunkSize = 36;
+      for (let idx = 0; idx < fullText.length; idx += chunkSize) {
+        if (isClientClosed()) break;
+        const slice = fullText.slice(idx, idx + chunkSize);
+        emittedChars += slice.length;
+        onEvent({ type: 'chunk', text: slice });
+      }
+      return emittedChars;
+    }
+
+    if (cfg.model === 'gemini-3.8-live-extended-thinking') {
+      const liveLevel =
+        effectiveThinkingLevel === ThinkingLevel.HIGH || effectiveThinkingLevel === ThinkingLevel.XHIGH
+          ? ThinkingLevel.HIGH
+          : effectiveThinkingLevel === ThinkingLevel.LOW || effectiveThinkingLevel === ThinkingLevel.MINIMAL
+          ? ThinkingLevel.LOW
+          : ThinkingLevel.MEDIUM;
+
+      const nonBlockingTools: Array<{ functionDeclarations: FunctionDeclaration[] }> = [
+        {
+          functionDeclarations: [...builtInDeclarations, ...customDeclarations].map((d) => ({
+            ...d,
+            behavior: Behavior.NON_BLOCKING,
+          })),
+        },
+      ];
+
+      const runLiveAttempt = async (useAudioWithTranscription: boolean): Promise<number> => {
+        let localEmitted = 0;
+        let resolvedDone = false;
+        const pendingToolJobs: Promise<void>[] = [];
+
+        return new Promise<number>(async (resolve, reject) => {
+          let settleTimer: NodeJS.Timeout | undefined;
+          let sessionRef: Awaited<ReturnType<typeof ai.live.connect>> | undefined;
+
+          const finish = (err?: unknown) => {
+            if (resolvedDone) return;
+            resolvedDone = true;
+            if (settleTimer) clearTimeout(settleTimer);
+            try {
+              sessionRef?.close();
+            } catch {
+              // ignore close errors
+            }
+            if (err) reject(err);
+            else resolve(localEmitted);
+          };
+
+          settleTimer = setTimeout(() => {
+            if (localEmitted > 0) finish();
+            else finish(new Error(`Model ${cfg.model} Live API timed out before responding.`));
+          }, 50_000);
+
+          try {
+            const liveAi = createGeminiClient('v1beta');
+            sessionRef = await liveAi.live.connect({
+              model: 'gemini-3.8-live-extended-thinking',
+              config: {
+                responseModalities: [useAudioWithTranscription ? Modality.AUDIO : Modality.TEXT],
+                ...(useAudioWithTranscription ? { outputAudioTranscription: {} } : {}),
+                thinkingConfig: { thinkingLevel: liveLevel },
+                tools: nonBlockingTools,
+                systemInstruction: effectiveSystemInstruction,
+              },
+              callbacks: {
+                onmessage: (message: LiveServerMessage) => {
+                  if (isClientClosed()) {
+                    finish();
+                    return;
+                  }
+                  const parts = message.serverContent?.modelTurn?.parts ?? [];
+                  for (const part of parts) {
+                    if (part.thought === true && typeof part.text === 'string' && part.text.length > 0) {
+                      emitMetaOnce();
+                      onEvent({ type: 'thought', text: part.text });
+                    } else if (!part.thought && typeof part.text === 'string' && part.text.length > 0) {
+                      emitMetaOnce();
+                      localEmitted += part.text.length;
+                      onEvent({ type: 'chunk', text: part.text });
+                    }
+                  }
+                  const transcriptText = message.serverContent?.outputTranscription?.text;
+                  if (useAudioWithTranscription && transcriptText) {
+                    emitMetaOnce();
+                    localEmitted += transcriptText.length;
+                    onEvent({ type: 'chunk', text: transcriptText });
+                  }
+                  for (const call of message.toolCall?.functionCalls ?? []) {
+                    if (!call?.name) continue;
+                    emitMetaOnce();
+                    const callId = call.id || crypto.randomUUID();
+                    const callArgs = (call.args || {}) as Record<string, unknown>;
+                    onEvent({
+                      type: 'thought',
+                      text: `\n• Async Live tool call: ${call.name}\n`,
+                    });
+                    onEvent({
+                      type: 'tool_call',
+                      id: callId,
+                      name: call.name,
+                      args: callArgs,
+                    });
+                    const job = (async () => {
+                      const started = Date.now();
+                      const customDef = customToolMap.get(call.name!);
+                      const toolResult = customDef
+                        ? executeCustomToolVm(customDef, callArgs)
+                        : await executeChatToolCall(call.name!, callArgs, {
+                            ghToken,
+                            activeWorkspaceId: activeWsId,
+                          });
+                      onEvent({
+                        type: 'tool_result',
+                        id: callId,
+                        name: call.name!,
+                        result: toolResult,
+                        ok: !toolResult.error,
+                        durationMs: Date.now() - started,
+                      });
+                      sessionRef?.sendToolResponse({
+                        functionResponses: [
+                          {
+                            id: call.id,
+                            name: call.name,
+                            response: toolResult,
+                            scheduling: FunctionResponseScheduling.WHEN_IDLE,
+                          },
+                        ],
+                      });
+                    })();
+                    pendingToolJobs.push(job);
+                  }
+                  const status = message.serverContent?.interactionStatus;
+                  if (status === InteractionStatus.IDLE && pendingToolJobs.length === 0) {
+                    finish();
+                  } else if (status === InteractionStatus.IDLE) {
+                    void Promise.allSettled(pendingToolJobs).then(() => {
+                      setTimeout(() => {
+                        if (!resolvedDone && localEmitted > 0) finish();
+                      }, 800);
+                    });
+                  } else if (!status && message.serverContent?.turnComplete && pendingToolJobs.length === 0 && localEmitted > 0) {
+                    setTimeout(() => finish(), 250);
+                  }
+                },
+                onerror: (ev: unknown) => {
+                  const errMsg = ev instanceof Error ? ev.message : String((ev as { message?: string })?.message || ev);
+                  finish(new Error(errMsg || 'Live Extended session error'));
+                },
+                onclose: () => {
+                  if (localEmitted > 0) finish();
+                },
+              },
+            });
+
+            sessionRef.sendClientContent({
+              turns: conversationContents,
+              turnComplete: true,
+            });
+          } catch (connectErr) {
+            finish(connectErr);
+          }
+        });
+      };
+
+      try {
+        emittedChars = await runLiveAttempt(true);
+      } catch (liveAudioErr) {
+        const msg = (liveAudioErr instanceof Error ? liveAudioErr.message : String(liveAudioErr)).toLowerCase();
+        if (msg.includes('modality') || msg.includes('audio') || msg.includes('invalid_argument') || msg.includes('unsupported')) {
+          emittedChars = await runLiveAttempt(false);
+        } else {
+          throw liveAudioErr;
+        }
+      }
+      return emittedChars;
+    }
+
+    const isGemmaModel = cfg.model.startsWith('gemma-');
+    const gemmaContents: Content[] = isGemmaModel
+      ? (() => {
+          const cloned: Content[] = conversationContents.map((c) => ({
+            role: c.role,
+            parts: [...(c.parts || [])],
+          }));
+          const firstUser = cloned.find((c) => c.role === 'user');
+          const sysPrefix = `[System Instructions]\n${effectiveSystemInstruction}\n\n[User Request]\n`;
+          if (firstUser && Array.isArray(firstUser.parts)) {
+            firstUser.parts = [{ text: sysPrefix }, ...firstUser.parts];
+          } else {
+            cloned.unshift({ role: 'user', parts: [{ text: sysPrefix }] });
+          }
+          return cloned;
+        })()
+      : conversationContents;
+
     for (let round = 0; round < 6; round += 1) {
       if (isClientClosed()) break;
 
@@ -1099,23 +1780,36 @@ Write your substantive response strictly as clean, executable, well-commented co
       };
 
       try {
-        let stream;
-        try {
-          stream = await ai.models.generateContentStream({
-            model: cfg.model,
-            contents: conversationContents,
-            config: {
+        const isGemini25 = cfg.model.startsWith('gemini-2.5');
+        const resolvedThinkingConfig = isGemini25
+          ? effectiveThinkingLevel === ThinkingLevel.MINIMAL || effectiveThinkingLevel === ThinkingLevel.LOW
+            ? { thinkingBudget: 0 }
+            : { thinkingBudget: 1024, includeThoughts: true }
+          : {
+              thinkingLevel: effectiveThinkingLevel,
+              ...(effectiveThinkingLevel !== ThinkingLevel.MINIMAL
+                ? { includeThoughts: true }
+                : {}),
+            };
+        const streamConfig = isGemmaModel
+          ? {
+              abortSignal: roundAbort.signal,
+              safetySettings: buildSafetySettings(safetyFilters, useBlockNoneFallback),
+            }
+          : {
               abortSignal: roundAbort.signal,
               systemInstruction: effectiveSystemInstruction,
               safetySettings: buildSafetySettings(safetyFilters, useBlockNoneFallback),
-              thinkingConfig: {
-                thinkingLevel: effectiveThinkingLevel,
-                ...(effectiveThinkingLevel !== ThinkingLevel.MINIMAL
-                  ? { includeThoughts: true }
-                  : {}),
-              },
+              thinkingConfig: resolvedThinkingConfig,
               tools: chatTools,
-            },
+            };
+        const targetAi = isGemmaModel ? createGeminiClient('v1beta') : ai;
+        let stream;
+        try {
+          stream = await targetAi.models.generateContentStream({
+            model: cfg.model,
+            contents: isGemmaModel ? gemmaContents : conversationContents,
+            config: streamConfig,
           });
         } catch (streamInitErr) {
           if (timedOut) {
@@ -1124,20 +1818,12 @@ Write your substantive response strictly as clean, executable, well-commented co
           const msgLower = (streamInitErr instanceof Error ? streamInitErr.message : String(streamInitErr)).toLowerCase();
           if (!useBlockNoneFallback && safetyFilters && Object.values(safetyFilters).includes('none') && (msgLower.includes('harm_block_threshold') || msgLower.includes('off') || msgLower.includes('invalid_argument'))) {
             useBlockNoneFallback = true;
-            stream = await ai.models.generateContentStream({
+            stream = await targetAi.models.generateContentStream({
               model: cfg.model,
-              contents: conversationContents,
+              contents: isGemmaModel ? gemmaContents : conversationContents,
               config: {
-                abortSignal: roundAbort.signal,
-                systemInstruction: effectiveSystemInstruction,
+                ...streamConfig,
                 safetySettings: buildSafetySettings(safetyFilters, true),
-                thinkingConfig: {
-                  thinkingLevel: effectiveThinkingLevel,
-                  ...(effectiveThinkingLevel !== ThinkingLevel.MINIMAL
-                    ? { includeThoughts: true }
-                    : {}),
-                },
-                tools: chatTools,
               },
             });
           } else {
@@ -1309,9 +1995,22 @@ Write your substantive response strictly as clean, executable, well-commented co
     return emittedChars;
   };
 
-  const attempts: ResolvedModelConfig[] = shouldFallback
+  const rawChain: ResolvedModelConfig[] = shouldFallback
     ? getFallbackChain(primary)
-    : [primary, primary];
+    : [primary, primary, primary];
+  const nonCooldown = rawChain.filter((c) => !isModelInCooldown(c.model));
+  const softCooldown503 = rawChain.filter((c) => {
+    const entry = modelCooldownUntil.get(c.model);
+    return Boolean(entry && Date.now() < entry.until && entry.reason === '503');
+  });
+  const healthyFirst = shouldFallback
+    ? nonCooldown.length > 0
+      ? [...nonCooldown, ...softCooldown503]
+      : softCooldown503.length > 0
+      ? softCooldown503
+      : rawChain
+    : rawChain;
+  const attempts = healthyFirst.length > 0 ? healthyFirst : rawChain;
 
   let emittedChars = 0;
   let lastErr: unknown;
@@ -1325,6 +2024,10 @@ Write your substantive response strictly as clean, executable, well-commented co
       break;
     } catch (err) {
       lastErr = err;
+      markModelCooldown(attempts[i].model, err);
+      const errLower = (err instanceof Error ? err.message : String(err)).toLowerCase();
+      const isQuota429 =
+        errLower.includes('429') || errLower.includes('resource_exhausted') || errLower.includes('quota');
       const nextIsSameModel =
         hasNext &&
         attempts[i + 1].model === attempts[i].model &&
@@ -1333,16 +2036,24 @@ Write your substantive response strictly as clean, executable, well-commented co
         !isClientClosed() &&
         hasNext &&
         isDemandOrTransientError(err) &&
-        !(nextIsSameModel && isBillingOrModelMissingError(err));
+        !(nextIsSameModel && (isBillingOrModelMissingError(err) || isQuota429));
       if (canRetry) {
-        await new Promise((r) => setTimeout(r, 250));
+        const baseDelay = nextIsSameModel ? (i === 0 ? 750 : 1650) : 260;
+        const jitter = Math.floor(Math.random() * 180);
+        await new Promise((r) => setTimeout(r, baseDelay + jitter));
         continue;
+      }
+      if (shouldFallback && !isClientClosed() && emittedChars === 0 && isDemandOrTransientError(err)) {
+        return runNeo4Pipeline(params, primary.id);
       }
       throw err;
     }
   }
 
   if (lastErr) {
+    if (shouldFallback && !isClientClosed() && emittedChars === 0 && isDemandOrTransientError(lastErr)) {
+      return runNeo4Pipeline(params, primary.id);
+    }
     throw lastErr;
   }
 
@@ -1362,6 +2073,7 @@ app.post('/api/chat/stream', async (req: Request, res: Response) => {
   const {
     messages,
     modelId,
+    neoMode,
     autoFallback,
     systemInstruction,
     safetyFilters,
@@ -1377,6 +2089,7 @@ app.post('/api/chat/stream', async (req: Request, res: Response) => {
   } = req.body as {
     messages?: IncomingMessage[];
     modelId?: ModelChoiceId;
+    neoMode?: 'llm' | 'rule';
     autoFallback?: boolean;
     systemInstruction?: string;
     safetyFilters?: IncomingSafetyFilters;
@@ -1430,6 +2143,7 @@ app.post('/api/chat/stream', async (req: Request, res: Response) => {
     await runFolioChatPipeline({
       messages,
       modelId,
+      neoMode,
       autoFallback,
       systemInstruction,
       safetyFilters,
@@ -1461,6 +2175,7 @@ app.post('/api/chat/complete', async (req: Request, res: Response) => {
   const {
     messages,
     modelId,
+    neoMode,
     autoFallback,
     systemInstruction,
     safetyFilters,
@@ -1476,6 +2191,7 @@ app.post('/api/chat/complete', async (req: Request, res: Response) => {
   } = req.body as {
     messages?: IncomingMessage[];
     modelId?: ModelChoiceId;
+    neoMode?: 'llm' | 'rule';
     autoFallback?: boolean;
     systemInstruction?: string;
     safetyFilters?: IncomingSafetyFilters;
@@ -1520,6 +2236,7 @@ app.post('/api/chat/complete', async (req: Request, res: Response) => {
     await runFolioChatPipeline({
       messages,
       modelId,
+      neoMode,
       autoFallback: autoFallback ?? true,
       systemInstruction,
       safetyFilters,
@@ -1596,17 +2313,27 @@ app.post('/api/chat/title', async (req: Request, res: Response) => {
 
   try {
     const ai = createGeminiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-lite',
-      contents: `Summarize the following user request into a concise 3 to 5 word conversation title. Output only the title text without quotes or trailing punctuation:\n\n${prompt.slice(0, 600)}`,
-      config: {
-        thinkingConfig: {
-          thinkingLevel: ThinkingLevel.MINIMAL,
-        },
-      },
-    });
-
-    const rawTitle = (response.text || '').trim().replace(/^["']|["']$/g, '');
+    const titleModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite', 'gemini-3.5-flash-lite'];
+    let rawTitle = '';
+    for (const tm of titleModels) {
+      if (isModelInCooldown(tm)) continue;
+      try {
+        const response = await ai.models.generateContent({
+          model: tm,
+          contents: `Summarize the following user request into a concise 3 to 5 word conversation title. Output only the title text without quotes or trailing punctuation:\n\n${prompt.slice(0, 600)}`,
+          config: {
+            abortSignal: AbortSignal.timeout(6000),
+            thinkingConfig: {
+              thinkingLevel: ThinkingLevel.MINIMAL,
+            },
+          },
+        });
+        rawTitle = (response.text || '').trim().replace(/^["']|["']$/g, '');
+        if (rawTitle) break;
+      } catch (e) {
+        markModelCooldown(tm, e);
+      }
+    }
     res.json({ title: rawTitle || prompt.slice(0, 42) });
   } catch {
     const fallback = prompt.trim().split(/\s+/).slice(0, 6).join(' ');
@@ -2338,7 +3065,7 @@ app.post('/api/sandbox/publish', (req: Request, res: Response) => {
 });
 
 app.get('/sandbox/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
+  const id = (req.params.id as string) as string;
   const record = sandboxStore.get(id);
   if (!record) {
     res
@@ -2405,7 +3132,7 @@ async function saveFlowVideoOutput(
 }
 
 app.get('/api/flow/media/:filename', async (req: Request, res: Response) => {
-  const { filename } = req.params;
+  const filename = (req.params.filename as string) as string;
   if (!/^[a-zA-Z0-9_-]+\.(mp4|webm|wav|mp3)$/.test(filename)) {
     res.status(400).json({ error: 'Invalid media filename.' });
     return;
@@ -3114,7 +3841,7 @@ app.post('/api/workspaces', async (req: Request, res: Response) => {
 
 app.delete('/api/workspaces/:id', async (req: Request, res: Response) => {
   try {
-    const id = sanitizeWorkspaceId(req.params.id);
+    const id = sanitizeWorkspaceId(((req.params.id as string) as string));
     if (id === 'folio-sandbox-1') {
       res.status(400).json({ error: 'Default workspace cannot be deleted.' });
       return;
@@ -3229,7 +3956,7 @@ async function scanWorkspaceFiles(workspaceDir: string): Promise<{
 
 app.get('/api/workspace/:id/files', async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const scanned = await scanWorkspaceFiles(workspaceDir);
     res.json(scanned);
   } catch (err) {
@@ -3240,7 +3967,7 @@ app.get('/api/workspace/:id/files', async (req: Request, res: Response) => {
 
 app.get('/api/workspace/:id/file', async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const relPath = typeof req.query.path === 'string' ? req.query.path : '';
     const fullPath = resolveWorkspaceFilePath(workspaceDir, relPath);
     if (!fs.existsSync(fullPath)) {
@@ -3268,7 +3995,7 @@ const MAX_LARGE_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 app.post('/api/workspace/:id/upload-large', async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const relPath = typeof req.query.path === 'string' ? req.query.path : '';
     const fullPath = resolveWorkspaceFilePath(workspaceDir, relPath);
 
@@ -3320,7 +4047,7 @@ app.post('/api/workspace/:id/upload-large', async (req: Request, res: Response) 
 
 app.post('/api/workspace/:id/files', async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const { files, clearBefore, designSystemCss } = req.body as {
       files?: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>;
       clearBefore?: boolean;
@@ -3366,7 +4093,7 @@ app.post('/api/workspace/:id/files', async (req: Request, res: Response) => {
 
 app.delete('/api/workspace/:id/file', async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const relPath = typeof req.query.path === 'string' ? req.query.path : '';
     const fullPath = resolveWorkspaceFilePath(workspaceDir, relPath);
     if (fullPath === workspaceDir) {
@@ -3464,7 +4191,7 @@ async function executeWorkspaceScript(
 
 app.post('/api/workspace/:id/execute', async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const { code, language, filePath, stdin, timeoutMs } = req.body as {
       code?: string;
       language?: string;
@@ -3495,7 +4222,7 @@ app.post('/api/workspace/:id/execute', async (req: Request, res: Response) => {
 
 app.post('/api/workspace/:id/workflow', async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const { steps: bodySteps, stopOnError = true } = req.body as {
       steps?: Array<{ name?: string; language?: string; filePath?: string; code?: string }>;
       stopOnError?: boolean;
@@ -3578,7 +4305,7 @@ app.post('/api/workspace/:id/workflow', async (req: Request, res: Response) => {
 app.get('/api/workspace/:id/archive.zip', async (req: Request, res: Response) => {
   let tmpZipDir = '';
   try {
-    const workspaceId = sanitizeWorkspaceId(req.params.id);
+    const workspaceId = sanitizeWorkspaceId(((req.params.id as string) as string));
     const workspaceDir = getWorkspaceDir(workspaceId);
     tmpZipDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'folio-zip-'));
     const zipPath = path.join(tmpZipDir, `${workspaceId}.zip`);
@@ -3623,7 +4350,7 @@ with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
 // Serve any workspace folder as a live multi-file web app!
 app.get(['/workspace-site/:id', '/workspace-site/:id/*'], async (req: Request, res: Response) => {
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const wildcard = (req.params as Record<string, string>)[0] || '';
     const relRequested = wildcard.replace(/^\/+/, '');
 
@@ -3671,7 +4398,7 @@ app.get(['/workspace-site/:id', '/workspace-site/:id/*'], async (req: Request, r
       let html = await fs.promises.readFile(targetPath, 'utf8');
       const dsFile = path.join(workspaceDir, '.folio-design-system.css');
       if (fs.existsSync(dsFile)) {
-        const dsTag = `<link rel="stylesheet" href="/workspace-site/${encodeURIComponent(req.params.id)}/__folio_design_system.css" />`;
+        const dsTag = `<link rel="stylesheet" href="/workspace-site/${encodeURIComponent(((req.params.id as string) as string))}/__folio_design_system.css" />`;
         html = /<\/head>/i.test(html)
           ? html.replace(/<\/head>/i, `  ${dsTag}\n</head>`)
           : `${dsTag}\n${html}`;
@@ -4024,7 +4751,7 @@ app.get('/api/stock/search', async (req: Request, res: Response) => {
 app.post('/api/workspace/:id/ai-run', async (req: Request, res: Response) => {
   const startMs = Date.now();
   try {
-    const workspaceDir = getWorkspaceDir(req.params.id);
+    const workspaceDir = getWorkspaceDir(((req.params.id as string) as string));
     const { prompt } = req.body as { prompt?: string };
     if (!prompt || !prompt.trim()) {
       res.status(400).json({ error: 'Prompt is required for Workspace AI.' });
@@ -4341,7 +5068,7 @@ app.post('/api/domains/namecom/register', async (req: Request, res: Response) =>
 
 app.delete('/api/domains/:domain', (req: Request, res: Response) => {
   try {
-    const domain = validateDomainName(req.params.domain);
+    const domain = validateDomainName(((req.params.domain as string) as string));
     const map = loadDomainsMap();
     delete map[domain];
     saveDomainsMap(map);
@@ -4354,7 +5081,7 @@ app.delete('/api/domains/:domain', (req: Request, res: Response) => {
 
 app.get(['/domain-preview/:domain', '/domain-preview/:domain/*'], async (req: Request, res: Response) => {
   try {
-    const domain = validateDomainName(req.params.domain);
+    const domain = validateDomainName(((req.params.domain as string) as string));
     const map = loadDomainsMap();
     const record = map[domain];
     if (!record) {
@@ -5546,7 +6273,7 @@ function getChatToolDeclarations(): FunctionDeclaration[] {
           },
           domain: {
             type: Type.STRING,
-            description: 'Full domain name when action="register" (e.g. "oxygen.ai").',
+            description: 'Full domain name when action="register" (e.g. "foliozero.ai").',
           },
           mode: {
             type: Type.STRING,
@@ -5754,6 +6481,55 @@ function getChatToolDeclarations(): FunctionDeclaration[] {
           },
         },
         required: ['scriptCode'],
+      },
+    },
+    {
+      name: 'antigravity_cli',
+      description:
+        'Invoke the Antigravity Autonomous Agent CLI (cloud Interactions API antigravity-preview-09-2026 when enabled, or isolated local workspace sandbox execution) to inspect files, run scripts/tests, and automate coding workflows while preserving a clean backup.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          action: {
+            type: Type.STRING,
+            description: '"run" | "inspect" | "test" | "status"',
+          },
+          task: {
+            type: Type.STRING,
+            description: 'Task instruction or shell/test command for Antigravity CLI.',
+          },
+          agentModel: {
+            type: Type.STRING,
+            description: 'Optional model for cloud Antigravity agent ("gemini-4-carbon" | "gemini-4-hydrogen" | "gemini-3.8-flash").',
+          },
+          mode: {
+            type: Type.STRING,
+            description: '"auto" | "cloud" | "local" (defaults to "auto", preferring local sandbox unless cloud is requested).',
+          },
+          workspaceId: {
+            type: Type.STRING,
+            description: 'Optional target workspace ID.',
+          },
+        },
+      },
+    },
+    {
+      name: 'folio_docs_lookup',
+      description:
+        'Search authoritative Folio v4.2 documentation, TypeScript/Python SDK APIs, folio CLI commands, engine JSON schemas (EVO 3D, Stop Motion v3, Pixel Engine v3, Three.js, Hybrid), RAM watchdog specs, and the complete Folio changelog.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          query: {
+            type: Type.STRING,
+            description: 'Search query (e.g. "evo hitbox", "python sdk", "folio cli", "changelog", "blender fallback").',
+          },
+          limit: {
+            type: Type.NUMBER,
+            description: 'Max matching sections to return (1-6, default 3).',
+          },
+        },
+        required: ['query'],
       },
     },
   ];
@@ -6431,11 +7207,29 @@ async function executeChatToolCall(
         return searchStockMedia(query, kind, limit);
       }
 
+      case 'folio_docs_lookup': {
+        const query = strArg('query') || 'overview';
+        const limit = typeof args.limit === 'number' ? Math.min(6, Math.max(1, Math.floor(args.limit))) : 3;
+        const hits = searchFolioDocs(query, limit);
+        const includeChangelog = /\b(changelog|version|release|history|v4\.|v3\.)\b/i.test(query);
+        return {
+          ok: true,
+          version: FOLIO_CURRENT_VERSION,
+          query,
+          matches: hits.map((h) => ({
+            id: h.id,
+            category: h.category,
+            title: h.title,
+            summary: h.summary,
+            content: h.content.slice(0, 1600),
+          })),
+          ...(includeChangelog ? { changelogs: FOLIO_CHANGELOGS } : {}),
+        };
+      }
+
       case 'blender_cli': {
         const blenderBin = getBlenderBinary();
-        if (!blenderBin) {
-          return { error: 'Blender CLI is not installed in the sandbox.' };
-        }
+        const freeRamMb = getAvailableRamMb();
         const pythonCode = typeof args.pythonCode === 'string' ? args.pythonCode : '';
         if (!pythonCode.trim()) return { error: 'pythonCode is required.' };
         const wsId = sanitizeWorkspaceId(strArg('workspaceId') || ctx.activeWorkspaceId);
@@ -6461,6 +7255,74 @@ async function executeChatToolCall(
           : `${headlessHeader}${pythonCode}`;
         await fs.promises.mkdir(path.dirname(fullScript), { recursive: true });
         await fs.promises.writeFile(fullScript, preparedPython, 'utf8');
+
+        // Low-RAM Guard or missing Blender CLI -> zero-bloat pure-Python procedural OBJ/MTL mesh fallback
+        if (!blenderBin || freeRamMb < 650) {
+          const fallbackPy = path.join(workspaceDir, '.folio_obj_fallback.py');
+          const pyFallbackCode = `
+import os, math
+
+obj_path = os.path.join(${JSON.stringify(workspaceDir)}, "fallback_scene.obj")
+mtl_path = os.path.join(${JSON.stringify(workspaceDir)}, "fallback_scene.mtl")
+
+with open(mtl_path, "w", encoding="utf-8") as mf:
+    mf.write("newmtl folio_accent\\nKd 0.22 0.74 0.97\\nKs 0.8 0.8 0.8\\nNs 64.0\\n")
+    mf.write("newmtl folio_ground\\nKd 0.14 0.16 0.22\\nKs 0.2 0.2 0.2\\nNs 16.0\\n")
+
+verts = []
+faces = []
+
+def add_box(cx, cy, cz, sx, sy, sz, mat):
+    base = len(verts) + 1
+    hx, hy, hz = sx * 0.5, sy * 0.5, sz * 0.5
+    for dx in (-hx, hx):
+        for dy in (-hy, hy):
+            for dz in (-hz, hz):
+                verts.append((cx + dx, cy + dy, cz + dz))
+    quads = [
+        (0,1,3,2), (4,6,7,5), (0,4,5,1),
+        (2,3,7,6), (0,2,6,4), (1,5,7,3)
+    ]
+    faces.append((mat, [(base+a, base+b, base+c, base+d) for a,b,c,d in quads]))
+
+add_box(0.0, -0.05, 0.0, 4.0, 0.1, 4.0, "folio_ground")
+add_box(0.0, 0.55, 0.0, 1.0, 1.0, 1.0, "folio_accent")
+
+with open(obj_path, "w", encoding="utf-8") as of:
+    of.write("# Folio Pure-Python Procedural Fallback Mesh\\n")
+    of.write("mtllib fallback_scene.mtl\\n")
+    for vx, vy, vz in verts:
+        of.write(f"v {vx:.4f} {vy:.4f} {vz:.4f}\\n")
+    for mat, qs in faces:
+        of.write(f"usemtl {mat}\\n")
+        for a, b, c, d in qs:
+            of.write(f"f {a} {b} {c} {d}\\n")
+print("Generated fallback_scene.obj and fallback_scene.mtl")
+`;
+          await fs.promises.writeFile(fallbackPy, pyFallbackCode.trim(), 'utf8');
+          await new Promise<void>((resolve) => {
+            const cp = spawn('python3', [fallbackPy], { cwd: workspaceDir, stdio: 'ignore' });
+            cp.on('close', () => resolve());
+            cp.on('error', () => resolve());
+          });
+          await fs.promises.unlink(fallbackPy).catch(() => {});
+          const scanned = await scanWorkspaceFiles(workspaceDir);
+          const ramReason = blenderBin && freeRamMb < 650;
+          return {
+            ok: true,
+            fallbackMode: true,
+            blenderInstalled: Boolean(blenderBin),
+            ramGuardTriggered: Boolean(ramReason),
+            freeRamMb,
+            workspaceId: wsId,
+            scriptPath: relScript,
+            fallbackMesh: 'fallback_scene.obj',
+            notice: ramReason
+              ? `RAM Watchdog blocked Blender Cycles (${freeRamMb} MB free < 650 MB safe minimum) to prevent container OOM and generated a lightweight procedural fallback_scene.obj instead.`
+              : 'Blender CLI binary is not installed; saved script and generated lightweight procedural fallback_scene.obj (.obj/.mtl). Install Blender via "python3 scripts/bootstrap_toolchains.py blender" or render inline with ```evo or ```threejs.',
+            files: scanned.files.map((f) => ({ path: f.path, size: f.size })).slice(0, 60),
+          };
+        }
 
         const blOut = await new Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }>(
           (resolve) => {
@@ -6553,34 +7415,56 @@ async function executeChatToolCall(
             errors.push('Stopmotion SVG must not contain <script> tags.');
           }
         } else if (kind === 'pixelart') {
-          const w = Number(parsed.width);
-          const h = Number(parsed.height);
+          const w = Number(parsed.width ?? 64);
+          const h = Number(parsed.height ?? 64);
           if (!Number.isFinite(w) || w < 1 || w > 512 || !Number.isFinite(h) || h < 1 || h > 512) {
             errors.push('pixelart width & height must be between 1 and 512.');
           }
-          if (!Array.isArray(parsed.frames) || parsed.frames.length === 0) {
-            errors.push('pixelart requires a non-empty "frames" array.');
+          const hasPixelContent =
+            (Array.isArray(parsed.frames) && parsed.frames.length > 0) ||
+            (Array.isArray(parsed.draw) && parsed.draw.length > 0) ||
+            (Array.isArray(parsed.backdrop) && parsed.backdrop.length > 0) ||
+            Boolean(parsed.pixels) ||
+            Boolean(parsed.rle);
+          if (!hasPixelContent) {
+            errors.push('pixelart requires "frames", procedural "draw"/"backdrop" ops, "pixels", or "rle".');
           }
         } else if (kind === 'liquidmotion') {
-          if (!parsed.pixelLayer || !Array.isArray(parsed.motionLayers)) {
-            errors.push('liquidmotion requires "pixelLayer" and "motionLayers" array.');
+          if (!parsed.pixelLayer && !parsed.pixelArt && !Array.isArray(parsed.motionLayers) && !Array.isArray(parsed.layers)) {
+            errors.push('liquidmotion requires "pixelLayer"/"pixelArt" and/or "motionLayers"/"layers".');
           }
         } else if (kind === 'liquiddrop' || kind === 'motiondrop') {
-          if (!parsed.pixelLayer && typeof parsed.svg !== 'string') {
-            errors.push(`${kind} requires "pixelLayer" and/or "svg" visual data.`);
+          if (!parsed.pixelLayer && !parsed.pixelArt && typeof parsed.svg !== 'string' && !Array.isArray(parsed.layers)) {
+            errors.push(`${kind} requires "pixelLayer", "layers", and/or "svg" visual data.`);
           }
         } else if (kind === 'pixelmotion') {
-          if (!parsed.pixelArt && !parsed.pixelLayer) {
+          if (!parsed.pixelArt && !parsed.pixelLayer && !Array.isArray(parsed.draw)) {
             errors.push('pixelmotion requires "pixelArt" (or "pixelLayer") spec.');
           }
-        } else if (kind === 'evo') {
-          const hasObjects =
+        } else if (kind === 'threejs') {
+          const hasThree =
             (Array.isArray(parsed.objects) && parsed.objects.length > 0) ||
-            (Array.isArray(parsed.elements) && parsed.elements.length > 0) ||
+            (Array.isArray(parsed.voxels) && parsed.voxels.length > 0) ||
+            (Array.isArray(parsed.elements) && parsed.elements.length > 0);
+          if (!hasThree) {
+            errors.push('threejs JSON requires non-empty "objects", "voxels", or "elements".');
+          }
+        } else if (kind === 'evo') {
+          const sceneObj = (parsed.scene && typeof parsed.scene === 'object' ? parsed.scene : null) as Record<string, unknown> | null;
+          const hasObjects =
             (Array.isArray(parsed.nodes) && parsed.nodes.length > 0) ||
-            Boolean(parsed.groups && typeof parsed.groups === 'object');
+            (Array.isArray(parsed.objects) && parsed.objects.length > 0) ||
+            (Array.isArray(parsed.layers) && parsed.layers.length > 0) ||
+            (Array.isArray(parsed.elements) && parsed.elements.length > 0) ||
+            (Array.isArray(parsed.primitives) && parsed.primitives.length > 0) ||
+            (Array.isArray(parsed.items) && parsed.items.length > 0) ||
+            (Array.isArray(parsed.shapes) && parsed.shapes.length > 0) ||
+            (Array.isArray(sceneObj?.nodes) && sceneObj.nodes.length > 0) ||
+            Boolean(parsed.groups && typeof parsed.groups === 'object') ||
+            typeof parsed.type === 'string' ||
+            typeof parsed.shape === 'string';
           if (!hasObjects) {
-            errors.push('evo requires a non-empty "objects", "elements", or "groups" definition.');
+            errors.push('evo requires a non-empty "nodes" (or "objects" / "layers" / "elements") array or primitive node.');
           }
           const fps = Number(parsed.fps ?? 30);
           if (!Number.isFinite(fps) || fps < 1 || fps > 60) {
@@ -6738,6 +7622,14 @@ async function executeChatToolCall(
         const godotBin = getGodotBinary();
         if (!godotBin) return { error: 'Godot CLI is not installed in the toolchain.' };
         const action = (strArg('action') || 'version').toLowerCase();
+        const freeRamMb = getAvailableRamMb();
+        if (action !== 'version' && freeRamMb < 450) {
+          return {
+            error: `RAM Watchdog blocked heavy Godot operation (${freeRamMb} MB free < 450 MB minimum) to prevent OOM.`,
+            ramGuardTriggered: true,
+            freeRamMb,
+          };
+        }
         const wsId = sanitizeWorkspaceId(strArg('workspaceId') || ctx.activeWorkspaceId);
         const workspaceDir = getWorkspaceDir(wsId);
 
@@ -6845,6 +7737,14 @@ async function executeChatToolCall(
         const cmakeBin = getCmakeBinary();
         const ninjaBin = getNinjaBinary();
         if (!cmakeBin) return { error: 'CMake binary not found.' };
+        const freeRamMb = getAvailableRamMb();
+        if (freeRamMb < 450) {
+          return {
+            error: `RAM Watchdog blocked CMake build (${freeRamMb} MB free < 450 MB minimum) to prevent OOM.`,
+            ramGuardTriggered: true,
+            freeRamMb,
+          };
+        }
         const wsId = sanitizeWorkspaceId(strArg('workspaceId') || ctx.activeWorkspaceId);
         const workspaceDir = getWorkspaceDir(wsId);
         const relSource = strArg('sourceDir') || '.';
@@ -7371,6 +8271,118 @@ run().then(res => console.log('META_RESULT:', JSON.stringify(res ?? { ok: true }
         };
       }
 
+      case 'antigravity_cli': {
+        const action = (strArg('action') || 'inspect').toLowerCase();
+        const task = strArg('task') || 'Inspect active workspace and summarize structure.';
+        const reqMode = (strArg('mode') || 'auto').toLowerCase();
+        const agentModel = strArg('agentModel') || 'gemini-4-carbon';
+        const wsId = sanitizeWorkspaceId(strArg('workspaceId') || ctx.activeWorkspaceId);
+        const workspaceDir = getWorkspaceDir(wsId);
+        const backupDir = path.join(__dirname, '.folio-data', 'backups');
+        const backups = fs.existsSync(backupDir)
+          ? (await fs.promises.readdir(backupDir)).filter((f) => f.endsWith('.tar.gz'))
+          : [];
+
+        if (action === 'status') {
+          return {
+            ok: true,
+            cli: 'antigravity_cli',
+            agent: 'antigravity-preview-09-2026',
+            cloudReady: Boolean(process.env.GEMINI_API_KEY),
+            localSandboxReady: true,
+            workspaceId: wsId,
+            backupsAvailable: backups,
+          };
+        }
+
+        if (reqMode === 'cloud' && process.env.GEMINI_API_KEY) {
+          const ai = createGeminiClient();
+          const interaction = await ai.interactions.create(
+            {
+              agent: 'antigravity-preview-09-2026',
+              input: task,
+              environment: 'remote',
+              agent_config: {
+                type: 'antigravity',
+                model: agentModel,
+                max_total_tokens: '120000',
+              },
+            },
+            { timeout: 120000 }
+          );
+          let fullOutput = '';
+          const stepSummary: Array<{ type: string; detail?: string }> = [];
+          if (Array.isArray(interaction.steps)) {
+            for (const step of interaction.steps) {
+              stepSummary.push({ type: step.type });
+              if (step.type === 'model_output' && Array.isArray(step.content)) {
+                for (const c of step.content) {
+                  if (c.type === 'text' && c.text) fullOutput += c.text;
+                }
+              }
+            }
+          }
+          if (!fullOutput && interaction.output_text) {
+            fullOutput = interaction.output_text;
+          }
+          return {
+            ok: true,
+            mode: 'cloud',
+            agent: 'antigravity-preview-09-2026',
+            model: agentModel,
+            interactionId: interaction.id,
+            steps: stepSummary.slice(0, 20),
+            output: fullOutput.slice(0, 16000),
+            backupsAvailable: backups,
+          };
+        }
+
+        const scan = await scanWorkspaceFiles(workspaceDir).catch(() => ({
+          files: [],
+          entryFolders: [],
+        }));
+        let commandStdout = '';
+        let commandStderr = '';
+        let exitCode = 0;
+
+        if (action === 'run' || action === 'test') {
+          const cmdToRun =
+            action === 'test' && task === 'Inspect active workspace and summarize structure.'
+              ? 'ls -la'
+              : task;
+          const runResult = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+            const cp = spawn('bash', ['-lc', cmdToRun], {
+              cwd: workspaceDir,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            let stdout = '', stderr = '';
+            const timer = setTimeout(() => cp.kill('SIGKILL'), 15000);
+            cp.stdout.on('data', (d) => { if (stdout.length < 16000) stdout += d.toString(); });
+            cp.stderr.on('data', (d) => { if (stderr.length < 8000) stderr += d.toString(); });
+            cp.on('close', (c) => { clearTimeout(timer); resolve({ stdout, stderr, exitCode: c ?? 0 }); });
+            cp.on('error', (e) => { clearTimeout(timer); resolve({ stdout: '', stderr: e.message, exitCode: 1 }); });
+          });
+          commandStdout = runResult.stdout;
+          commandStderr = runResult.stderr;
+          exitCode = runResult.exitCode;
+        }
+
+        return {
+          ok: exitCode === 0,
+          mode: 'local-sandbox',
+          cli: 'antigravity_cli',
+          agent: 'antigravity-preview-09-2026',
+          workspaceId: wsId,
+          task,
+          fileCount: scan.files.length,
+          files: scan.files.slice(0, 30).map((f) => f.path),
+          stdout: commandStdout,
+          stderr: commandStderr,
+          exitCode,
+          backupsAvailable: backups,
+        };
+      }
+
       default:
         return { error: `Unknown tool "${name}".` };
     }
@@ -7432,7 +8444,8 @@ app.get('/api/toolchains/status', async (_req: Request, res: Response) => {
 
   res.json({
     ok: true,
-    version: '4.1',
+    version: '4.2',
+    codename: FOLIO_CURRENT_VERSION,
     toolchains: {
       godot: { available: Boolean(godot), path: godot, version: '4.3-stable' },
       cmake: { available: Boolean(cmake), path: cmake, version: '3.25+' },
@@ -7444,10 +8457,38 @@ app.get('/api/toolchains/status', async (_req: Request, res: Response) => {
       blender: { available: Boolean(blender), path: blender },
       sqlite: { available: fs.existsSync('/usr/bin/sqlite3') },
       neo4PythonEngine: { available: neo4Engine, path: 'python/neo4_engine.py' },
+      antigravityCli: {
+        available: true,
+        agent: 'antigravity-preview-09-2026',
+        cloudReady: Boolean(process.env.GEMINI_API_KEY),
+        localSandboxReady: true,
+      },
       ghCli: { available: Boolean(gh), path: gh },
     },
     exportPresetsSupported: ['Linux/X11', 'Windows Desktop', 'macOS', 'Web', 'Android', 'iOS'],
   });
+});
+
+app.post('/api/toolchains/antigravity', async (req: Request, res: Response) => {
+  const { action, task, agentModel, mode, workspaceId } = req.body as Record<string, unknown>;
+  const wsId = sanitizeWorkspaceId(typeof workspaceId === 'string' ? workspaceId : 'folio-sandbox-1');
+  const startedAt = Date.now();
+  try {
+    const result = await executeChatToolCall(
+      'antigravity_cli',
+      {
+        action: typeof action === 'string' ? action : 'inspect',
+        task: typeof task === 'string' ? task : 'Inspect workspace files',
+        agentModel: typeof agentModel === 'string' ? agentModel : 'gemini-4-carbon',
+        mode: typeof mode === 'string' ? mode : 'auto',
+        workspaceId: wsId,
+      },
+      { ghToken: null, activeWorkspaceId: wsId }
+    );
+    res.json({ ok: !result.error && result.ok !== false, durationMs: Date.now() - startedAt, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Antigravity CLI failed.' });
+  }
 });
 
 app.post('/api/toolchains/build', async (req: Request, res: Response) => {
@@ -7510,9 +8551,66 @@ app.post('/api/reverse-engineer', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/docs', (req: Request, res: Response) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const limitRaw = typeof req.query.limit === 'string' ? Number(req.query.limit) : 20;
+  const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, Math.floor(limitRaw))) : 20;
+  const sections = q ? searchFolioDocs(q, limit) : FOLIO_DOCS_SECTIONS;
+  res.json({
+    ok: true,
+    version: FOLIO_CURRENT_VERSION,
+    query: q,
+    total: FOLIO_DOCS_SECTIONS.length,
+    sections,
+  });
+});
+
+app.get('/api/changelog', (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    currentVersion: FOLIO_CURRENT_VERSION,
+    changelogs: FOLIO_CHANGELOGS,
+  });
+});
+
+app.get('/api/system/health', (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    ...getSystemHealthSnapshot(),
+  });
+});
+
+app.get('/api/system/backups', (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    backups: listFolioBackups(),
+  });
+});
+
+app.post('/api/system/backup', async (req: Request, res: Response) => {
+  const label = typeof req.body?.label === 'string' ? req.body.label : undefined;
+  const created = await createFolioBackup(label);
+  if (!created.ok) {
+    res.status(500).json({ ok: false, error: created.error || 'Backup failed.' });
+    return;
+  }
+  res.json({
+    ok: true,
+    backup: created,
+    backups: listFolioBackups(),
+  });
+});
+
 function getBlenderBinary(): string | null {
-  if (fs.existsSync('/usr/bin/blender')) return '/usr/bin/blender';
-  if (fs.existsSync('/usr/local/bin/blender')) return '/usr/local/bin/blender';
+  const candidates = [
+    '/opt/folio-toolchains/blender/blender',
+    path.join(FOLIO_BIN_DIR, 'blender'),
+    '/usr/local/bin/blender',
+    '/usr/bin/blender',
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
   return null;
 }
 
@@ -7575,6 +8673,29 @@ async function ensureGitHubCliInstalled() {
   }
 }
 
+async function ensureFolioDocsIndexedOnBoot(): Promise<void> {
+  try {
+    fs.mkdirSync(FOLIO_NEO4_DIR, { recursive: true });
+    const docsDbPath = path.join(FOLIO_NEO4_DIR, 'folio_docs.db');
+    if (fs.existsSync(docsDbPath) && fs.statSync(docsDbPath).size > 4096) return;
+    const trainerScript = path.join(__dirname, 'python', 'neo4_trainer.py');
+    if (!fs.existsSync(trainerScript)) return;
+    const payload = JSON.stringify({
+      sections: FOLIO_DOCS_SECTIONS,
+      changelogs: FOLIO_CHANGELOGS,
+      version: FOLIO_CURRENT_VERSION,
+    });
+    const child = spawn('python3', [trainerScript, '--ingest-folio-docs'], {
+      cwd: __dirname,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    child.stdin.write(payload);
+    child.stdin.end();
+  } catch {
+    // Non-fatal boot docs index
+  }
+}
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
@@ -7594,6 +8715,7 @@ async function startServer() {
   const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on http://0.0.0.0:${PORT}`);
     void ensureGitHubCliInstalled();
+    void ensureFolioDocsIndexedOnBoot();
   });
   httpServer.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
@@ -7603,6 +8725,7 @@ async function startServer() {
         const actualPort = typeof addr === 'object' && addr ? addr.port : 0;
         console.log(`Server fallback listening on http://0.0.0.0:${actualPort}`);
         void ensureGitHubCliInstalled();
+        void ensureFolioDocsIndexedOnBoot();
       });
       fallbackServer.requestTimeout = 300_000;
       fallbackServer.headersTimeout = 66_000;

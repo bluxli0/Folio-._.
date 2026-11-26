@@ -26,6 +26,12 @@ export const VECTOR_BRUSH_META: Array<{
   { id: 'neon', label: 'Neon Tube', description: 'Luminous outer aura + core' },
   { id: 'watercolor', label: 'Watercolor', description: 'Translucent layered wet wash' },
   { id: 'pixel', label: 'Pixel Brush', description: 'Snapped crisp grid squares' },
+  { id: 'spray', label: 'Spray Can', description: 'Deterministic aerosol mist splatter' },
+  { id: 'charcoal', label: 'Charcoal', description: 'Textured dry-grain graphite stroke' },
+  { id: 'ribbon', label: 'Calligraphic Ribbon', description: 'Tapered twin-edge ribbon band' },
+  { id: 'sparkle', label: 'Starlight Sparkle', description: 'Twinkling four-point star trail' },
+  { id: 'doubleline', label: 'Twin Ink', description: 'Parallel double-track architectural pen' },
+  { id: 'stipple', label: 'Halftone Stipple', description: 'Clustered organic ink dots' },
 ];
 
 export function isVectorBrushStyle(tool: string): tool is VectorBrushStyle {
@@ -39,7 +45,13 @@ export function isVectorBrushStyle(tool: string): tool is VectorBrushStyle {
     tool === 'airbrush' ||
     tool === 'neon' ||
     tool === 'watercolor' ||
-    tool === 'pixel'
+    tool === 'pixel' ||
+    tool === 'spray' ||
+    tool === 'charcoal' ||
+    tool === 'ribbon' ||
+    tool === 'sparkle' ||
+    tool === 'doubleline' ||
+    tool === 'stipple'
   );
 }
 
@@ -158,6 +170,51 @@ export function vectorElementsToSvgMarkup(elements: VectorStrokeElement[]): stri
           const bold = `<path d="${shifted}" fill="none" stroke="${color}" stroke-width="${Math.max(2, el.width * 1.15).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />`;
           return `<g>${thin}${bold}</g>`;
         }
+        case 'spray': {
+          const dots: string[] = [];
+          const spread = Math.max(8, el.width * 2.8);
+          el.points.forEach((p, idx) => {
+            for (let s = 0; s < 5; s += 1) {
+              const a = Math.sin((idx + 1) * 19.3 + s * 7.7) * Math.PI * 2;
+              const r = (Math.abs(Math.cos(idx * 11.1 + s * 3.3)) % 1) * spread;
+              const sz = 0.8 + ((idx + s) % 3) * 0.5;
+              dots.push(`<circle cx="${(p.x + Math.cos(a) * r).toFixed(1)}" cy="${(p.y + Math.sin(a) * r).toFixed(1)}" r="${sz.toFixed(1)}" fill="${color}" opacity="0.55" />`);
+            }
+          });
+          return `<g>${dots.join('')}</g>`;
+        }
+        case 'charcoal':
+          return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 1.6).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity="0.78" filter="url(#tactileOrganicNoise)" />`;
+        case 'ribbon': {
+          const offset = Math.max(2, el.width * 0.5);
+          const shifted = buildSmoothSvgPath(el.points.map((p) => ({ x: p.x + offset, y: p.y + offset * 0.5 })));
+          return `<g><path d="${d}" fill="none" stroke="${color}" stroke-width="${(el.width * 1.5).toFixed(1)}" opacity="0.35" stroke-linecap="round" /><path d="${shifted}" fill="none" stroke="${color}" stroke-width="${Math.max(1.5, el.width * 0.7).toFixed(1)}" stroke-linecap="round" /></g>`;
+        }
+        case 'sparkle': {
+          const stars: string[] = [`<path d="${d}" fill="none" stroke="${color}" stroke-width="${Math.max(1, el.width * 0.45).toFixed(1)}" opacity="0.45" />`];
+          const step = Math.max(1, Math.floor(el.points.length / 10));
+          for (let i = 0; i < el.points.length; i += step) {
+            const p = el.points[i];
+            const r = Math.max(4, el.width * 1.4);
+            stars.push(`<path d="M ${p.x} ${p.y - r} L ${p.x + r * 0.25} ${p.y - r * 0.25} L ${p.x + r} ${p.y} L ${p.x + r * 0.25} ${p.y + r * 0.25} L ${p.x} ${p.y + r} L ${p.x - r * 0.25} ${p.y + r * 0.25} L ${p.x - r} ${p.y} L ${p.x - r * 0.25} ${p.y - r * 0.25} Z" fill="${color}" />`);
+          }
+          return `<g>${stars.join('')}</g>`;
+        }
+        case 'doubleline': {
+          const off = Math.max(2, el.width * 0.65);
+          const shifted = buildSmoothSvgPath(el.points.map((p) => ({ x: p.x + off, y: p.y + off })));
+          const w = Math.max(1, el.width * 0.55).toFixed(1);
+          return `<g><path d="${d}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="round" /><path d="${shifted}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="round" /></g>`;
+        }
+        case 'stipple': {
+          const circles: string[] = [];
+          el.points.forEach((p, idx) => {
+            const ox = Math.sin(idx * 17.3) * el.width;
+            const oy = Math.cos(idx * 23.7) * el.width;
+            circles.push(`<circle cx="${(p.x + ox).toFixed(1)}" cy="${(p.y + oy).toFixed(1)}" r="${Math.max(1, el.width * 0.35).toFixed(1)}" fill="${color}" opacity="0.72" />`);
+          });
+          return `<g>${circles.join('')}</g>`;
+        }
         case 'pen':
         default:
           return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${el.width}" stroke-linecap="round" stroke-linejoin="round" />`;
@@ -259,9 +316,9 @@ export function renderVectorElementOnCanvas(
     return;
   }
 
-  if (el.brush === 'dots') {
-    const step = Math.max(8, el.width * 2);
-    const radius = Math.max(1.5, el.width * 0.6);
+  if (el.brush === 'dots' || el.brush === 'stipple' || el.brush === 'spray') {
+    const step = el.brush === 'spray' ? 2 : Math.max(8, el.width * 2);
+    const radius = el.brush === 'spray' ? Math.max(0.8, el.width * 0.25) : Math.max(1.5, el.width * 0.6);
     let acc = step;
     for (let i = 0; i < pts.length; i += 1) {
       const p = pts[i];
@@ -269,12 +326,33 @@ export function renderVectorElementOnCanvas(
         acc += Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y);
       }
       if (i === 0 || acc >= step) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        ctx.fill();
+        const count = el.brush === 'spray' ? 4 : 1;
+        for (let s = 0; s < count; s += 1) {
+          const ox = el.brush === 'spray' ? Math.sin(i * 19.3 + s * 7.7) * el.width * 2.2 : 0;
+          const oy = el.brush === 'spray' ? Math.cos(i * 13.7 + s * 5.3) * el.width * 2.2 : 0;
+          ctx.beginPath();
+          ctx.arc(p.x + ox, p.y + oy, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
         acc = 0;
       }
     }
+    ctx.restore();
+    return;
+  }
+
+  if (el.brush === 'doubleline' || el.brush === 'ribbon') {
+    const off = Math.max(2, el.width * 0.65);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = el.brush === 'ribbon' ? el.width * 1.4 : Math.max(1, el.width * 0.55);
+    ctx.globalAlpha = el.brush === 'ribbon' ? 0.38 : 1;
+    traceSmooth(pts);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = Math.max(1, el.width * 0.55);
+    traceSmooth(pts.map((p) => ({ x: p.x + off, y: p.y + off })));
+    ctx.stroke();
     ctx.restore();
     return;
   }

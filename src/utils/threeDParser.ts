@@ -100,6 +100,14 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
     : 'null';
   const lighting = spec.lighting || 'studio';
   const autoRotate = Boolean(spec.autoRotate);
+  const showHitboxes = Boolean(spec.showHitboxes);
+  const defaultFloorY = typeof spec.physicsFloorY === 'number' ? spec.physicsFloorY : -1.8;
+  const fogColor = spec.fogColor || '';
+  const fogDensity = typeof spec.fogDensity === 'number' ? spec.fogDensity : 0;
+  const starfieldCount = spec.starfield === true ? 280 : typeof spec.starfield === 'number' ? Math.max(0, Math.min(2000, spec.starfield)) : 0;
+  const showGridFloor = Boolean(spec.gridFloor);
+  const cameraFov = typeof spec.cameraFov === 'number' ? Math.max(20, Math.min(110, spec.cameraFov)) : 48;
+  const exposure = typeof spec.exposure === 'number' ? spec.exposure : 1.05;
 
   const vendorOrigin =
     typeof window !== 'undefined' &&
@@ -399,9 +407,27 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
       if (setup) {
         const { scene, camera, renderer, updateOrbitCamera, getOrbitState, setOrbitYaw } = setup;
         const objectsData = ${objectsJson};
+        const showGlobalHitboxes = ${showHitboxes};
+        const defaultFloorY = ${defaultFloorY};
+        const hasAnyPhysics = objectsData.some((o) => (o.physics && o.physics.enabled !== false) || o.animation === 'physicsBounce');
+        if (hasAnyPhysics || showGlobalHitboxes) {
+          const physGrid = new THREE.GridHelper(10, 16, 0x38bdf8, 0x1e293b);
+          physGrid.position.y = defaultFloorY;
+          scene.add(physGrid);
+        }
+
         const meshes = [];
 
         objectsData.forEach((obj) => {
+          const repCount = typeof obj.repeat === 'number'
+            ? Math.max(1, Math.min(24, obj.repeat))
+            : obj.repeat && typeof obj.repeat === 'object'
+            ? Math.max(1, Math.min(24, obj.repeat.count || 1))
+            : 1;
+          const repRadius = obj.repeat && typeof obj.repeat === 'object' ? (obj.repeat.radius ?? 1.8) : 1.8;
+          const repDy = obj.repeat && typeof obj.repeat === 'object' ? (obj.repeat.dy ?? 0) : 0;
+
+          for (let rIdx = 0; rIdx < repCount; rIdx += 1) {
           let geom;
           switch (obj.shape) {
             case 'box': geom = new THREE.BoxGeometry(1, 1, 1); break;
@@ -413,54 +439,274 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
             case 'icosahedron': geom = new THREE.IcosahedronGeometry(1.0, 0); break;
             case 'octahedron': geom = new THREE.OctahedronGeometry(1.0, 0); break;
             case 'dodecahedron': geom = new THREE.DodecahedronGeometry(1.0, 0); break;
+            case 'tetrahedron': geom = new THREE.TetrahedronGeometry(1.0, 0); break;
+            case 'ring': geom = new THREE.TorusGeometry(0.95, 0.08, 12, 48); break;
+            case 'plane': geom = new THREE.PlaneGeometry(3.2, 3.2); break;
+            case 'capsule': geom = new THREE.CylinderGeometry(0.45, 0.45, 1.0, 24); break;
+            case 'pyramid': geom = new THREE.ConeGeometry(0.9, 1.5, 4); break;
+            case 'prism': geom = new THREE.CylinderGeometry(0.7, 0.7, 1.3, 6); break;
+            case 'crystal': geom = new THREE.OctahedronGeometry(0.85, 0); break;
+            case 'helix':
+            case 'dnaHelix':
+            case 'splineTube': {
+              const pts = [];
+              const count = 84;
+              for (let idx = 0; idx <= count; idx += 1) {
+                const u = idx / count;
+                const ang = u * Math.PI * 6 + (obj.shape === 'dnaHelix' && rIdx % 2 === 1 ? Math.PI : 0);
+                pts.push(new THREE.Vector3(Math.cos(ang) * 0.75, (u - 0.5) * 2.6, Math.sin(ang) * 0.75));
+              }
+              geom = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 84, 0.08, 12, false);
+              break;
+            }
+            case 'mobius': {
+              geom = new THREE.PlaneGeometry(1, 1, 48, 8);
+              const pos = geom.attributes.position;
+              for (let i = 0; i < pos.count; i += 1) {
+                const u = (pos.getX(i) + 0.5) * Math.PI * 2;
+                const v = pos.getY(i) * 0.42;
+                pos.setXYZ(i, (0.9 + v * Math.cos(u * 0.5)) * Math.cos(u), (0.9 + v * Math.cos(u * 0.5)) * Math.sin(u), v * Math.sin(u * 0.5));
+              }
+              geom.computeVertexNormals();
+              break;
+            }
+            case 'gear': {
+              const teeth = 10;
+              const shape = new THREE.Shape();
+              for (let i = 0; i <= teeth * 4; i += 1) {
+                const a = (i / (teeth * 4)) * Math.PI * 2;
+                const rad = i % 4 === 1 || i % 4 === 2 ? 1.0 : 0.72;
+                if (i === 0) shape.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+                else shape.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+              }
+              geom = new THREE.ExtrudeGeometry(shape, { depth: 0.25, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.02 });
+              geom.center();
+              break;
+            }
+            case 'star': {
+              const shape = new THREE.Shape();
+              for (let i = 0; i <= 10; i += 1) {
+                const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+                const rad = i % 2 === 0 ? 1.05 : 0.44;
+                if (i === 0) shape.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+                else shape.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+              }
+              geom = new THREE.ExtrudeGeometry(shape, { depth: 0.24, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.02 });
+              geom.center();
+              break;
+            }
+            case 'terrain':
+            case 'waveSurface': {
+              geom = new THREE.PlaneGeometry(3.6, 3.6, 44, 44);
+              geom.rotateX(-Math.PI / 2);
+              const pos = geom.attributes.position;
+              for (let idx = 0; idx < pos.count; idx += 1) {
+                const vx = pos.getX(idx);
+                const vz = pos.getZ(idx);
+                const r = Math.hypot(vx, vz);
+                const vy = obj.shape === 'terrain'
+                  ? 0.42 * Math.sin(vx * 1.9) * Math.cos(vz * 1.9) + 0.22 * Math.sin(vx * 3.7 + vz * 2.1)
+                  : 0.45 * Math.sin(r * 2.8) * Math.exp(-r * 0.22) + 0.16 * Math.cos(vx * 2.2) * Math.sin(vz * 2.2);
+                pos.setY(idx, vy);
+              }
+              geom.computeVertexNormals();
+              break;
+            }
+            case 'graphRibbon': {
+              const pts = [];
+              const count = 96;
+              for (let idx = 0; idx <= count; idx += 1) {
+                const u = idx / count;
+                const x = -1.6 + u * 3.2;
+                const y = Math.sin(u * Math.PI * 4) * 0.55 + Math.cos(u * Math.PI * 2) * 0.25;
+                const z = Math.cos(u * Math.PI * 4) * 0.45;
+                pts.push(new THREE.Vector3(x, y, z));
+              }
+              const curve = new THREE.CatmullRomCurve3(pts);
+              geom = new THREE.TubeGeometry(curve, 96, 0.09, 14, false);
+              break;
+            }
             default: geom = new THREE.BoxGeometry(1, 1, 1);
           }
 
+          let useVertexGradient = false;
+          if (Array.isArray(obj.gradientColors) && obj.gradientColors.length >= 2) {
+            const pos = geom.attributes.position;
+            geom.computeBoundingBox();
+            const bb = geom.boundingBox;
+            if (pos && bb) {
+              const spanX = Math.max(1e-4, bb.max.x - bb.min.x);
+              const stops = obj.gradientColors.map((c) => new THREE.Color(c));
+              const cols = new Float32Array(pos.count * 3);
+              const tmp = new THREE.Color();
+              for (let idx = 0; idx < pos.count; idx += 1) {
+                const u = Math.max(0, Math.min(1, (pos.getX(idx) - bb.min.x) / spanX));
+                const scaled = u * (stops.length - 1);
+                const i0 = Math.min(stops.length - 1, Math.floor(scaled));
+                const i1 = Math.min(stops.length - 1, i0 + 1);
+                tmp.copy(stops[i0]).lerp(stops[i1], scaled - i0);
+                cols[idx * 3] = tmp.r;
+                cols[idx * 3 + 1] = tmp.g;
+                cols[idx * 3 + 2] = tmp.b;
+              }
+              geom.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+              useVertexGradient = true;
+            }
+          }
+
           let mat;
-          const color = obj.color || '#38bdf8';
+          const color = useVertexGradient ? '#ffffff' : (obj.color || '#38bdf8');
           const roughness = obj.roughness ?? 0.3;
           const metalness = obj.metalness ?? 0.8;
           const wireframe = Boolean(obj.wireframe);
+          const flatShading = Boolean(obj.flatShading);
+          const opacity = typeof obj.opacity === 'number' ? obj.opacity : 1;
+          const sideOpt = obj.shape === 'waveSurface' || obj.shape === 'terrain' || obj.shape === 'mobius' || obj.shape === 'plane' ? THREE.DoubleSide : THREE.FrontSide;
+          const emColor = obj.emissive || '#000000';
+          const emInt = obj.emissiveIntensity ?? (obj.emissive ? 0.8 : 0);
 
           switch (obj.material) {
             case 'glass':
-              mat = new THREE.MeshPhysicalMaterial({ color, roughness: 0.1, metalness: 0.1, transmission: 0.9, thickness: 1.2, ior: 1.5, transparent: true, opacity: 0.85, wireframe });
+            case 'glassTinted':
+              mat = new THREE.MeshPhysicalMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, roughness: 0.08, metalness: 0.08, transmission: 0.88, thickness: 1.2, ior: 1.5, transparent: true, opacity: obj.material === 'glassTinted' ? 0.65 : 0.85, wireframe });
               break;
             case 'gold':
-              mat = new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.15, metalness: 0.95, wireframe });
+              mat = new THREE.MeshStandardMaterial({ color: useVertexGradient ? '#ffffff' : '#facc15', vertexColors: useVertexGradient, side: sideOpt, roughness: 0.15, metalness: 0.95, wireframe, flatShading });
+              break;
+            case 'chrome':
+              mat = new THREE.MeshStandardMaterial({ color: useVertexGradient ? '#ffffff' : '#e2e8f0', vertexColors: useVertexGradient, side: sideOpt, roughness: 0.06, metalness: 0.98, wireframe });
+              break;
+            case 'copper':
+              mat = new THREE.MeshStandardMaterial({ color: useVertexGradient ? '#ffffff' : '#d97757', vertexColors: useVertexGradient, side: sideOpt, roughness: 0.22, metalness: 0.92, wireframe });
+              break;
+            case 'carbon':
+              mat = new THREE.MeshStandardMaterial({ color: '#1e293b', vertexColors: useVertexGradient, side: sideOpt, roughness: 0.36, metalness: 0.65, wireframe });
+              break;
+            case 'obsidian':
+              mat = new THREE.MeshStandardMaterial({ color: '#09090b', vertexColors: useVertexGradient, side: sideOpt, roughness: 0.08, metalness: 0.85, wireframe });
+              break;
+            case 'lava':
+              mat = new THREE.MeshStandardMaterial({ color: '#ea580c', emissive: '#f97316', emissiveIntensity: 1.35, side: sideOpt, roughness: 0.5, metalness: 0.15, wireframe });
+              break;
+            case 'ice':
+              mat = new THREE.MeshPhysicalMaterial({ color: '#bae6fd', side: sideOpt, roughness: 0.12, metalness: 0.08, transmission: 0.78, ior: 1.31, transparent: true, opacity: 0.88, wireframe });
+              break;
+            case 'emerald':
+              mat = new THREE.MeshPhysicalMaterial({ color: '#10b981', side: sideOpt, roughness: 0.1, metalness: 0.15, transmission: 0.68, ior: 1.57, transparent: true, opacity: 0.9, wireframe });
+              break;
+            case 'hologram':
+            case 'iridescent':
+              mat = new THREE.MeshPhysicalMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, roughness: 0.14, metalness: 0.25, iridescence: 1.0, emissive: obj.emissive || '#38bdf8', emissiveIntensity: 0.55, transparent: true, opacity: obj.material === 'hologram' ? 0.68 : opacity, wireframe });
+              break;
+            case 'additiveGlow':
+              mat = new THREE.MeshBasicMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, wireframe });
               break;
             case 'neon':
-              mat = new THREE.MeshBasicMaterial({ color, wireframe: true });
+              mat = new THREE.MeshBasicMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, wireframe: true });
               break;
             case 'clay':
-              mat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0.05, wireframe });
+            case 'matte':
+              mat = new THREE.MeshStandardMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, roughness: 0.94, metalness: 0.03, wireframe, flatShading });
               break;
             case 'wireframe':
-              mat = new THREE.MeshBasicMaterial({ color, wireframe: true });
+              mat = new THREE.MeshBasicMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, wireframe: true });
               break;
             case 'toon':
-              mat = new THREE.MeshToonMaterial({ color, wireframe });
+              mat = new THREE.MeshToonMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, wireframe });
               break;
             case 'normal':
-              mat = new THREE.MeshNormalMaterial({ wireframe });
+              mat = new THREE.MeshNormalMaterial({ side: sideOpt, wireframe, flatShading });
               break;
             default:
-              mat = new THREE.MeshStandardMaterial({ color, roughness, metalness, wireframe });
+              mat = new THREE.MeshStandardMaterial({ color, vertexColors: useVertexGradient, side: sideOpt, roughness, metalness, emissive: emColor, emissiveIntensity: emInt, transparent: opacity < 1, opacity, wireframe, flatShading });
           }
 
-          const mesh = new THREE.Mesh(geom, mat);
-          mesh.position.set(...(obj.position || [0,0,0]));
+          let mesh;
+          if (obj.shape === 'particleCloud') {
+            const pCount = 260;
+            const pPos = new Float32Array(pCount * 3);
+            for (let pi = 0; pi < pCount; pi += 1) {
+              const a = (pi * 2.39996) % (Math.PI * 2);
+              const phi = Math.acos(1 - 2 * ((pi + 0.5) / pCount));
+              const rr = 0.4 + 0.9 * ((pi % 9) / 8);
+              pPos[pi * 3] = Math.sin(phi) * Math.cos(a) * rr;
+              pPos[pi * 3 + 1] = Math.cos(phi) * rr;
+              pPos[pi * 3 + 2] = Math.sin(phi) * Math.sin(a) * rr;
+            }
+            const pg = new THREE.BufferGeometry();
+            pg.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+            const pm = new THREE.PointsMaterial({ color: obj.color || '#38bdf8', size: 0.07, transparent: true, opacity: opacity });
+            mesh = new THREE.Points(pg, pm);
+          } else {
+            mesh = new THREE.Mesh(geom, mat);
+          }
+
+          const baseP = obj.position || [0,0,0];
+          const repAngle = repCount > 1 ? (rIdx / repCount) * Math.PI * 2 : 0;
+          const offX = repCount > 1 ? Math.cos(repAngle) * repRadius : 0;
+          const offZ = repCount > 1 ? Math.sin(repAngle) * repRadius : 0;
+          const offY = repCount > 1 ? repDy * rIdx : 0;
+          mesh.position.set(baseP[0] + offX, baseP[1] + offY, baseP[2] + offZ);
           mesh.rotation.set(...(obj.rotation || [0,0,0]));
-          mesh.scale.set(...(obj.scale || [1,1,1]));
-          mesh.userData = { anim: obj.animation || 'rotate', speed: obj.speed ?? 1.0 };
+          const baseScale = obj.scale || [1,1,1];
+          mesh.scale.set(...baseScale);
+
+          geom.computeBoundingBox();
+          const localBb = geom.boundingBox;
+          const halfSize = new THREE.Vector3(0.5, 0.5, 0.5);
+          if (localBb) {
+            const sz = localBb.getSize(new THREE.Vector3());
+            halfSize.set(
+              Math.max(0.1, sz.x * Math.abs(mesh.scale.x) * 0.5),
+              Math.max(0.1, sz.y * Math.abs(mesh.scale.y) * 0.5),
+              Math.max(0.1, sz.z * Math.abs(mesh.scale.z) * 0.5)
+            );
+          }
+
+          const physEnabled = Boolean((obj.physics && obj.physics.enabled !== false) || obj.animation === 'physicsBounce');
+          const showHb = Boolean(showGlobalHitboxes || obj.hitbox || physEnabled);
+          const hbIdleHex = obj.hitboxColor || '#22d3ee';
+          const hbCollideHex = obj.collideColor || '#f43f5e';
+          let boxHelper = null;
+          if (showHb && !(mesh instanceof THREE.Points)) {
+            boxHelper = new THREE.BoxHelper(mesh, new THREE.Color(hbIdleHex));
+            scene.add(boxHelper);
+          }
+
+          mesh.userData = {
+            anim: obj.animation || 'rotate',
+            speed: obj.speed ?? 1.0,
+            basePos: [mesh.position.x, mesh.position.y, mesh.position.z],
+            baseScale: [...baseScale],
+            physEnabled,
+            vel: new THREE.Vector3(
+              obj.physics && typeof obj.physics.vx === 'number' ? obj.physics.vx : (physEnabled ? 1.2 : 0),
+              obj.physics && typeof obj.physics.vy === 'number' ? obj.physics.vy : 0,
+              obj.physics && typeof obj.physics.vz === 'number' ? obj.physics.vz : 0
+            ),
+            gravity: obj.physics && typeof obj.physics.gravity === 'number' ? obj.physics.gravity : -9.8,
+            restitution: obj.physics && typeof obj.physics.restitution === 'number' ? obj.physics.restitution : 0.85,
+            drag: obj.physics && typeof obj.physics.drag === 'number' ? obj.physics.drag : 0,
+            attractor: obj.physics && obj.physics.attractor ? obj.physics.attractor : null,
+            floorY: obj.physics && typeof obj.physics.floorY === 'number' ? obj.physics.floorY : defaultFloorY,
+            walls: (obj.physics && Array.isArray(obj.physics.walls) ? obj.physics.walls : [3.2, 3.6, 3.2]),
+            mass: (obj.physics && typeof obj.physics.mass === 'number' ? obj.physics.mass : 1.0),
+            halfSize,
+            boxHelper,
+            hbIdleColor: new THREE.Color(hbIdleHex),
+            hbCollideColor: new THREE.Color(hbCollideHex),
+            hitFlash: 0,
+            box3: new THREE.Box3(),
+          };
           scene.add(mesh);
           meshes.push(mesh);
+          }
         });
 
         const clock = new THREE.Clock();
         function animate() {
           requestAnimationFrame(animate);
-          const delta = clock.getDelta();
+          const delta = Math.min(0.05, Math.max(0.001, clock.getDelta()));
           const time = clock.getElapsedTime();
           updateOrbitCamera();
           const st = getOrbitState();
@@ -470,24 +716,136 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
           }
 
           meshes.forEach((m) => {
-            const anim = m.userData.anim;
-            const spd = m.userData.speed;
-            if (anim === 'rotate') {
+            const ud = m.userData;
+            if (ud.hitFlash > 0) ud.hitFlash = Math.max(0, ud.hitFlash - delta);
+            const anim = ud.anim;
+            const spd = ud.speed;
+            if (ud.physEnabled) {
+              ud.vel.y += ud.gravity * delta;
+              if (ud.attractor) {
+                const ax = (ud.attractor.x || 0) - m.position.x;
+                const ay = (ud.attractor.y || 0) - m.position.y;
+                const az = (ud.attractor.z || 0) - m.position.z;
+                const d2 = Math.max(0.25, ax * ax + ay * ay + az * az);
+                const str = ud.attractor.strength ?? 5;
+                ud.vel.x += (ax / Math.sqrt(d2)) * (str / d2) * delta;
+                ud.vel.y += (ay / Math.sqrt(d2)) * (str / d2) * delta;
+                ud.vel.z += (az / Math.sqrt(d2)) * (str / d2) * delta;
+              }
+              if (ud.drag) ud.vel.multiplyScalar(Math.max(0, 1 - ud.drag * delta));
+              m.position.x += ud.vel.x * delta;
+              m.position.y += ud.vel.y * delta;
+              m.position.z += ud.vel.z * delta;
+              m.rotation.x += delta * spd * 0.45;
+              m.rotation.y += delta * spd * 0.65;
+
+              const minY = ud.floorY + ud.halfSize.y;
+              if (m.position.y < minY) {
+                m.position.y = minY;
+                if (Math.abs(ud.vel.y) > 0.25) {
+                  ud.vel.y = Math.abs(ud.vel.y) * ud.restitution;
+                  ud.hitFlash = 0.14;
+                } else {
+                  ud.vel.y = 0;
+                }
+              }
+              const wx = Math.max(0.6, ud.walls[0] - ud.halfSize.x);
+              const wz = Math.max(0.6, ud.walls[2] - ud.halfSize.z);
+              if (m.position.x > wx) { m.position.x = wx; ud.vel.x = -Math.abs(ud.vel.x) * ud.restitution; ud.hitFlash = 0.14; }
+              else if (m.position.x < -wx) { m.position.x = -wx; ud.vel.x = Math.abs(ud.vel.x) * ud.restitution; ud.hitFlash = 0.14; }
+              if (m.position.z > wz) { m.position.z = wz; ud.vel.z = -Math.abs(ud.vel.z) * ud.restitution; ud.hitFlash = 0.14; }
+              else if (m.position.z < -wz) { m.position.z = -wz; ud.vel.z = Math.abs(ud.vel.z) * ud.restitution; ud.hitFlash = 0.14; }
+            } else if (anim === 'rotate') {
               m.rotation.x += delta * spd * 0.8;
               m.rotation.y += delta * spd * 1.0;
+            } else if (anim === 'spinX') {
+              m.rotation.x += delta * spd * 1.4;
+            } else if (anim === 'spinZ') {
+              m.rotation.z += delta * spd * 1.4;
             } else if (anim === 'bounce') {
-              m.position.y += Math.sin(time * spd * 3) * 0.01;
-            } else if (anim === 'pulse') {
-              const sc = 1 + Math.sin(time * spd * 3) * 0.12;
-              m.scale.set(sc, sc, sc);
+              m.position.y = ud.basePos[1] + Math.abs(Math.sin(time * spd * 2.5)) * 0.8;
+            } else if (anim === 'pulse' || anim === 'breathing') {
+              const amp = anim === 'breathing' ? 0.08 : 0.15;
+              const sc = 1 + Math.sin(time * spd * 3) * amp;
+              m.scale.set(ud.baseScale[0] * sc, ud.baseScale[1] * sc, ud.baseScale[2] * sc);
             } else if (anim === 'float') {
-              m.position.y += Math.sin(time * spd * 2) * 0.008;
+              m.position.y = ud.basePos[1] + Math.sin(time * spd * 2) * 0.28;
               m.rotation.z += delta * spd * 0.4;
             } else if (anim === 'orbit') {
-              m.rotation.y += delta * spd * 1.5;
+              const r = Math.max(1.2, Math.hypot(ud.basePos[0], ud.basePos[2]));
+              const a = time * spd * 1.2;
+              m.position.x = Math.cos(a) * r;
+              m.position.z = Math.sin(a) * r;
+              m.rotation.y += delta * spd;
+            } else if (anim === 'figure8' || anim === 'lissajous') {
+              const a = time * spd * 1.4;
+              m.position.x = ud.basePos[0] + Math.sin(a * 2) * 1.4;
+              m.position.y = ud.basePos[1] + Math.sin(a * 3) * 0.6;
+              m.position.z = ud.basePos[2] + Math.cos(a) * 1.1;
+            } else if (anim === 'spiral') {
+              const u = (time * spd * 0.25) % 1;
+              const ang = u * Math.PI * 6;
+              const rad = 0.4 + u * 2.2;
+              m.position.x = Math.cos(ang) * rad;
+              m.position.z = Math.sin(ang) * rad;
+              m.position.y = (u - 0.5) * 2.4;
+            } else if (anim === 'pendulum' || anim === 'wobble') {
+              m.rotation.z = Math.sin(time * spd * 2.8) * (anim === 'pendulum' ? 0.65 : 0.25);
+            } else if (anim === 'spring') {
+              const u = (time * spd * 0.5) % 1;
+              m.position.y = ud.basePos[1] + Math.exp(-3.5 * u) * Math.cos(u * Math.PI * 8) * 0.7;
+            } else if (anim === 'explodeLoop') {
+              const s = 1 + 0.5 * (0.5 - 0.5 * Math.cos(time * spd * 2));
+              m.position.set(ud.basePos[0] * s, ud.basePos[1] * s, ud.basePos[2] * s);
             } else if (anim === 'chaos') {
               m.rotation.x += delta * spd * 1.2;
               m.rotation.z += delta * spd * 0.9;
+            }
+          });
+
+          // Pairwise Box3 hitbox collision detection & impulse
+          meshes.forEach((m) => m.userData.box3.setFromObject(m));
+          for (let i = 0; i < meshes.length; i += 1) {
+            for (let j = i + 1; j < meshes.length; j += 1) {
+              const a = meshes[i];
+              const b = meshes[j];
+              if (!a.userData.boxHelper && !b.userData.boxHelper && !a.userData.physEnabled && !b.userData.physEnabled) continue;
+              if (a.userData.box3.intersectsBox(b.userData.box3)) {
+                a.userData.hitFlash = 0.18;
+                b.userData.hitFlash = 0.18;
+                if (a.userData.physEnabled && b.userData.physEnabled) {
+                  const dx = a.position.x - b.position.x;
+                  const dy = a.position.y - b.position.y;
+                  const dz = a.position.z - b.position.z;
+                  const len = Math.hypot(dx, dy, dz) || 1;
+                  const nx = dx / len, ny = dy / len, nz = dz / len;
+                  a.position.x += nx * 0.04; a.position.y += ny * 0.04; a.position.z += nz * 0.04;
+                  b.position.x -= nx * 0.04; b.position.y -= ny * 0.04; b.position.z -= nz * 0.04;
+                  const rvx = a.userData.vel.x - b.userData.vel.x;
+                  const rvy = a.userData.vel.y - b.userData.vel.y;
+                  const rvz = a.userData.vel.z - b.userData.vel.z;
+                  const vn = rvx * nx + rvy * ny + rvz * nz;
+                  if (vn < 0) {
+                    const e = Math.min(a.userData.restitution, b.userData.restitution);
+                    const imp = (-(1 + e) * vn) / (1 / a.userData.mass + 1 / b.userData.mass);
+                    a.userData.vel.x += (imp / a.userData.mass) * nx;
+                    a.userData.vel.y += (imp / a.userData.mass) * ny;
+                    a.userData.vel.z += (imp / a.userData.mass) * nz;
+                    b.userData.vel.x -= (imp / b.userData.mass) * nx;
+                    b.userData.vel.y -= (imp / b.userData.mass) * ny;
+                    b.userData.vel.z -= (imp / b.userData.mass) * nz;
+                  }
+                }
+              }
+            }
+          }
+
+          meshes.forEach((m) => {
+            if (m.userData.boxHelper) {
+              m.userData.boxHelper.update();
+              m.userData.boxHelper.material.color.copy(
+                m.userData.hitFlash > 0 ? m.userData.hbCollideColor : m.userData.hbIdleColor
+              );
             }
           });
 
@@ -547,13 +905,36 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
       }
       renderer.setSize(w, h);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      renderer.shadowMap.enabled = true;
+      renderer.toneMappingExposure = ${exposure};
       container.appendChild(renderer.domElement);
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color('${bg}');
+      if (${fogDensity} > 0 || '${fogColor}') {
+        scene.fog = new THREE.FogExp2('${fogColor || bg}', ${fogDensity || 0.03});
+      }
 
-      const camera = new THREE.PerspectiveCamera(48, w / h, 0.1, 1000);
+      if (${starfieldCount} > 0) {
+        const sPos = new Float32Array(${starfieldCount} * 3);
+        for (let si = 0; si < ${starfieldCount}; si += 1) {
+          const theta = (si * 2.39996) % (Math.PI * 2);
+          const phi = Math.acos(1 - 2 * ((si + 0.5) / ${starfieldCount}));
+          const rad = 16 + (si % 9) * 1.5;
+          sPos[si * 3] = Math.sin(phi) * Math.cos(theta) * rad;
+          sPos[si * 3 + 1] = Math.cos(phi) * rad * 0.7;
+          sPos[si * 3 + 2] = Math.sin(phi) * Math.sin(theta) * rad;
+        }
+        const sg = new THREE.BufferGeometry();
+        sg.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+        scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xe0f2fe, size: 0.12, transparent: true, opacity: 0.85 })));
+      }
+      if (${showGridFloor}) {
+        const gf = new THREE.GridHelper(16, 24, 0x334155, 0x1e293b);
+        gf.position.y = ${defaultFloorY};
+        scene.add(gf);
+      }
+
+      const camera = new THREE.PerspectiveCamera(${cameraFov}, w / h, 0.1, 1000);
       let orbitYaw = 0.65;
       let orbitPitch = 0.32;
       let cameraTargetDist = 6.2;
@@ -594,20 +975,20 @@ export function buildThreeJsHtml(spec: ThreeDSceneSpec): string {
       }, { passive: false });
 
       const ambientLight = new THREE.AmbientLight(
-        '${lighting === 'sunset' ? '#fed7aa' : lighting === 'cyberpunk' ? '#06b6d4' : lighting === 'matrix' ? '#4ade80' : '#ffffff'}',
-        ${lighting === 'dramatic' ? 0.8 : 1.45}
+        '${lighting === 'sunset' || lighting === 'goldenHour' ? '#fed7aa' : lighting === 'cyberpunk' || lighting === 'arctic' ? '#06b6d4' : lighting === 'vaporwave' ? '#f472b6' : lighting === 'matrix' || lighting === 'emeraldForest' ? '#4ade80' : lighting === 'volcanic' ? '#fb923c' : '#ffffff'}',
+        ${lighting === 'dramatic' || lighting === 'noir' || lighting === 'void' ? 0.65 : 1.45}
       );
       scene.add(ambientLight);
 
       const dirLight = new THREE.DirectionalLight(
-        '${lighting === 'sunset' ? '#f97316' : lighting === 'cyberpunk' ? '#ec4899' : '#ffffff'}',
-        ${lighting === 'dramatic' ? 2.5 : 2.0}
+        '${lighting === 'sunset' || lighting === 'volcanic' ? '#f97316' : lighting === 'cyberpunk' || lighting === 'vaporwave' ? '#ec4899' : lighting === 'arctic' ? '#7dd3fc' : '#ffffff'}',
+        ${lighting === 'dramatic' || lighting === 'noir' ? 2.6 : 2.0}
       );
       dirLight.position.set(5, 8, 5);
       dirLight.castShadow = true;
       scene.add(dirLight);
 
-      const pointLight = new THREE.PointLight('#38bdf8', 1.5, 50);
+      const pointLight = new THREE.PointLight('${lighting === 'volcanic' ? '#ef4444' : lighting === 'vaporwave' ? '#c084fc' : '#38bdf8'}', 1.5, 50);
       pointLight.position.set(-5, -3, -3);
       scene.add(pointLight);
 

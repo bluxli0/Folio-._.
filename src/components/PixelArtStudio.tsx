@@ -53,6 +53,7 @@ import {
   getContrastingTextColor,
   lightenColor,
   PALETTE_PRESETS,
+  resolveNamedPalette,
 } from '../utils/pixelArtPalettes';
 import { PIXEL_ART_DEMOS } from '../utils/pixelArtDemos';
 import {
@@ -227,10 +228,16 @@ export const PixelArtStudio: React.FC<PixelArtStudioProps> = ({
     redoStackRef.current = [];
     setCanUndo(false);
     setCanRedo(false);
-    if (externalSpec.palette && externalSpec.palette.length > 0) {
-      setCustomColors(externalSpec.palette);
-      setPrimaryColor(externalSpec.palette[0] || '#ffffff');
-      if (externalSpec.palette[1]) setSecondaryColor(externalSpec.palette[1]);
+    const resolvedPalette =
+      typeof externalSpec.palette === 'string'
+        ? resolveNamedPalette(externalSpec.palette) || []
+        : Array.isArray(externalSpec.palette)
+        ? externalSpec.palette
+        : [];
+    if (resolvedPalette.length > 0) {
+      setCustomColors(resolvedPalette);
+      setPrimaryColor(resolvedPalette[0] || '#ffffff');
+      if (resolvedPalette[1]) setSecondaryColor(resolvedPalette[1]);
     }
     showTempStatus('Loaded pixel art into Studio.');
     onConsumeExternalSpec?.();

@@ -91,7 +91,7 @@ export function exportMessageAsJson(m: ChatMessage) {
 export function exportMessageAsXml(m: ChatMessage) {
   const xml = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    '<folioExport schema="folio.message/v1" version="OXYGEN">',
+    '<folioExport schema="folio.message/v1" version="4.1-zero">',
     messageToXml(m),
     '</folioExport>',
   ].join('\n');
@@ -131,7 +131,7 @@ export function exportThreadAsJson(thread: ConversationThread) {
   if (!thread || thread.messages.length === 0) return;
   const payload = {
     schema: 'folio.thread/v1',
-    version: 'OXYGEN',
+    version: '4.1-zero',
     exportedAt: new Date().toISOString(),
     thread: {
       id: thread.id,
@@ -169,7 +169,7 @@ export function exportThreadAsXml(thread: ConversationThread) {
   if (!thread || thread.messages.length === 0) return;
   const xml = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<folioThread id="${escapeXml(thread.id)}" title="${escapeXml(thread.title)}" model="${escapeXml(thread.modelId)}" version="OXYGEN" exportedAt="${new Date().toISOString()}">`,
+    `<folioThread id="${escapeXml(thread.id)}" title="${escapeXml(thread.title)}" model="${escapeXml(thread.modelId)}" version="4.1-zero" exportedAt="${new Date().toISOString()}">`,
     ...thread.messages.map(messageToXml),
     '</folioThread>',
   ].join('\n');

@@ -1,4 +1,5 @@
 import type { MathAudioTrackSpec } from './mathAudioSynth';
+import { UNIFIED_MATH_FUNCS, applyUnifiedEasing } from './mathFunctions';
 
 export type EvoGeometryType =
   | 'box'
@@ -9,20 +10,29 @@ export type EvoGeometryType =
   | 'cone'
   | 'icosahedron'
   | 'octahedron'
+  | 'dodecahedron'
+  | 'tetrahedron'
+  | 'prism'
+  | 'pyramid'
+  | 'helix'
+  | 'mobius'
+  | 'klein'
+  | 'lathe'
+  | 'gear'
+  | 'star3d'
+  | 'voxelGrid'
+  | 'particles3d'
+  | 'axes3d'
+  | 'wireCube'
   | 'ring'
   | 'plane'
   | 'capsule'
+  | 'graph'
+  | 'surface'
+  | 'curve'
   | 'group';
 
-export type EvoEasingName =
-  | 'linear'
-  | 'easeIn'
-  | 'easeOut'
-  | 'easeInOut'
-  | 'easeOutExpo'
-  | 'easeOutBounce'
-  | 'backOut'
-  | 'elasticOut';
+export type EvoEasingName = string;
 
 export interface EvoMotionSpec {
   x?: number | string;
@@ -38,18 +48,27 @@ export interface EvoMotionSpec {
   scaleX?: number | string;
   scaleY?: number | string;
   scaleZ?: number | string;
-  spinY?: number;
   spinX?: number;
+  spinY?: number;
+  spinZ?: number;
   bob?: number | { amp: number; freq?: number; phase?: number };
   sway?: number | { amp: number; freq?: number; phase?: number };
+  waveY?: number | { amp: number; freq?: number; phase?: number };
+  bounceAmp?: number;
   orbit?: {
     cx?: number;
+    cy?: number;
     cz?: number;
     rx: number;
+    ry?: number;
     rz?: number;
     turns?: number;
     phase?: number;
   };
+  orbitY?: number | { radius?: number; turns?: number; phase?: number };
+  orbitX?: number | { radius?: number; turns?: number; phase?: number };
+  lissajous?: { ax?: number; ay?: number; az?: number; fx?: number; fy?: number; fz?: number; phase?: number };
+  spiral?: { r0?: number; r1?: number; turns?: number; height?: number };
   pulse?: { min?: number; max?: number; freq?: number; phase?: number };
 }
 
@@ -65,7 +84,24 @@ export interface EvoKeyframeSpec {
   ease?: EvoEasingName;
 }
 
+export type EvoMaterialPreset =
+  | 'glass'
+  | 'chrome'
+  | 'gold'
+  | 'neon'
+  | 'hologram'
+  | 'clay'
+  | 'toon'
+  | 'carbon'
+  | 'obsidian'
+  | 'lava'
+  | 'ice'
+  | 'emerald'
+  | 'copper'
+  | 'pearl';
+
 export interface EvoMaterialSpec {
+  preset?: EvoMaterialPreset;
   color?: string;
   roughness?: number;
   metalness?: number;
@@ -75,11 +111,47 @@ export interface EvoMaterialSpec {
   thickness?: number;
   ior?: number;
   iridescence?: number;
+  sheen?: number;
+  sheenColor?: string;
+  flatShading?: boolean;
+  side?: 'front' | 'back' | 'double';
+  blending?: 'normal' | 'additive' | 'multiply';
+  envMapIntensity?: number;
   emissive?: string;
   emissiveIntensity?: number;
+  emissivePulse?: { min?: number; max?: number; freq?: number };
+  outlineColor?: string;
   opacity?: number;
   wireframe?: boolean;
   usePixelTexture?: boolean;
+  gradient?: {
+    colors: string[];
+    axis?: 'x' | 'y' | 'z' | 'radial';
+  };
+}
+
+export interface EvoHitboxSpec {
+  shape?: 'box' | 'sphere';
+  size?: [number, number, number];
+  radius?: number;
+  show?: boolean;
+  color?: string;
+  collideColor?: string;
+}
+
+export interface EvoPhysicsSpec {
+  enabled?: boolean;
+  velocity?: [number, number, number];
+  gravity?: number;
+  mass?: number;
+  restitution?: number;
+  friction?: number;
+  drag?: number;
+  attractor?: { x?: number; y?: number; z?: number; strength?: number };
+  floorY?: number;
+  walls?: [number, number, number];
+  collidable?: boolean;
+  isStatic?: boolean;
 }
 
 export interface EvoNodeSpec {
@@ -97,6 +169,8 @@ export interface EvoNodeSpec {
   material?: EvoMaterialSpec;
   motion?: EvoMotionSpec;
   keyframes?: EvoKeyframeSpec[];
+  hitbox?: EvoHitboxSpec;
+  physics?: EvoPhysicsSpec;
   follow?: {
     targetId: string;
     lag?: number;
@@ -112,15 +186,36 @@ export interface EvoNodeSpec {
     dy?: number;
     dz?: number;
   };
+  graph?: {
+    expr?: string;
+    xExpr?: string;
+    yExpr?: string;
+    zExpr?: string;
+    xmin?: number;
+    xmax?: number;
+    zmin?: number;
+    zmax?: number;
+    samples?: number;
+    tubeRadius?: number;
+  };
+  teeth?: number;
+  turns?: number;
+  points?: number;
+  count?: number;
+  profile?: Array<[number, number]>;
   children?: EvoNodeSpec[];
 }
 
 export interface EvoStoryboardShot {
   id?: string;
   label?: string;
+  name?: string;
   start: number; // 0..1 normalized
   end: number;
   cameraCut?: 'wide' | 'medium' | 'closeup' | 'dutch' | 'overhead' | 'orbit';
+  position?: [number, number, number];
+  target?: [number, number, number];
+  fov?: number;
   camera?: {
     x?: number;
     y?: number;
@@ -140,6 +235,21 @@ export interface EvoStoryboardShot {
   };
 }
 
+export type EvoEnvironmentPreset =
+  | 'studio'
+  | 'neon'
+  | 'sunset'
+  | 'obsidian'
+  | 'void'
+  | 'cyberpunk'
+  | 'arctic'
+  | 'desert'
+  | 'cosmic'
+  | 'forest'
+  | 'vaporwave'
+  | 'midnight'
+  | 'goldenHour';
+
 export interface EvoSceneSpec {
   format: 'evo/v1';
   title: string;
@@ -150,9 +260,20 @@ export interface EvoSceneSpec {
   loop: boolean;
   pingPong: boolean;
   background: string;
-  environment: 'studio' | 'neon' | 'sunset' | 'obsidian' | 'void';
+  environment: EvoEnvironmentPreset;
+  fog?: boolean | { color?: string; density?: number };
+  starfield?: boolean | number;
+  exposure?: number;
+  camera?: {
+    fov?: number;
+    position?: [number, number, number];
+    target?: [number, number, number];
+    autoRotate?: boolean;
+    autoRotateSpeed?: number;
+  };
   gridFloor?: boolean;
   contactShadows?: boolean;
+  showHitboxes?: boolean;
   pixelLayer?: Record<string, unknown>;
   groups?: Record<string, EvoNodeSpec>;
   nodes: EvoNodeSpec[];
@@ -169,43 +290,7 @@ export interface EvoSceneSpec {
 }
 
 export function applyEvoEasing(name: EvoEasingName | undefined, u: number): number {
-  const x = Math.max(0, Math.min(1, u));
-  switch (name) {
-    case 'easeIn':
-      return x * x * x;
-    case 'easeOut':
-      return 1 - Math.pow(1 - x, 3);
-    case 'easeInOut':
-      return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-    case 'easeOutExpo':
-      return x === 1 ? 1 : 1 - Math.pow(2, -10 * x);
-    case 'easeOutBounce': {
-      const n1 = 7.5625;
-      const d1 = 2.75;
-      if (x < 1 / d1) return n1 * x * x;
-      if (x < 2 / d1) {
-        const k = x - 1.5 / d1;
-        return n1 * k * k + 0.75;
-      }
-      if (x < 2.5 / d1) {
-        const k = x - 2.25 / d1;
-        return n1 * k * k + 0.9375;
-      }
-      const k = x - 2.625 / d1;
-      return n1 * k * k + 0.984375;
-    }
-    case 'backOut': {
-      const c1 = 1.70158;
-      const c3 = c1 + 1;
-      return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
-    }
-    case 'elasticOut': {
-      if (x === 0 || x === 1) return x;
-      return Math.pow(2, -10 * x) * Math.sin((x * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1;
-    }
-    default:
-      return x;
-  }
+  return applyUnifiedEasing(u, name);
 }
 
 export function evaluateEvoMathExpr(
@@ -224,6 +309,7 @@ export function evaluateEvoMathExpr(
 
   try {
     const scope = {
+      ...UNIFIED_MATH_FUNCS,
       t,
       u: t,
       i,
@@ -232,34 +318,7 @@ export function evaluateEvoMathExpr(
       duration: durationSec,
       PI: Math.PI,
       TAU: Math.PI * 2,
-      sin: Math.sin,
-      cos: Math.cos,
-      tan: Math.tan,
-      abs: Math.abs,
-      sqrt: Math.sqrt,
-      pow: Math.pow,
-      exp: Math.exp,
-      min: Math.min,
-      max: Math.max,
-      floor: Math.floor,
-      ceil: Math.ceil,
-      round: Math.round,
-      atan2: Math.atan2,
-      hypot: Math.hypot,
-      lerp: (a: number, b: number, f: number) => a + (b - a) * f,
-      clamp: (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v)),
-      pingpong: (x: number) => 1 - Math.abs(((x % 2) + 2) % 2 - 1),
-      smoothstep: (e0: number, e1: number, x: number) => {
-        const k = Math.max(0, Math.min(1, (x - e0) / (e1 - e0 || 1)));
-        return k * k * (3 - 2 * k);
-      },
-      easeInOut: (x: number) => applyEvoEasing('easeInOut', x),
-      easeOutExpo: (x: number) => applyEvoEasing('easeOutExpo', x),
-      easeOutBounce: (x: number) => applyEvoEasing('easeOutBounce', x),
-      backOut: (x: number) => applyEvoEasing('backOut', x),
-      elasticOut: (x: number) => applyEvoEasing('elasticOut', x),
-      wave: (x: number, freq = 1) => 0.5 + 0.5 * Math.sin(x * Math.PI * 2 * freq),
-      deg: (d: number) => (d * Math.PI) / 180,
+      E: Math.E,
     };
 
     const keys = Object.keys(scope);
@@ -316,6 +375,12 @@ export function evaluateEvoSpecFidelity(spec: {
     notes.push('Math-synthesized audio track synced to timeline');
   }
 
+  const hasPhysicsOrHitbox = spec.nodes.some((n) => Boolean(n.physics || n.hitbox));
+  if (hasPhysicsOrHitbox) {
+    score += 5;
+    notes.push('Rigid-body physics & collision hitbox solver active');
+  }
+
   notes.push(`Timeline: ${spec.durationSec}s @ ${spec.fps}fps`);
 
   return {
@@ -337,9 +402,9 @@ export function parseEvoCode(
     .replace(/\s*```$/i, '')
     .trim();
 
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(unfenced) as Record<string, unknown>;
+    parsed = JSON.parse(unfenced);
   } catch (err) {
     return {
       error:
@@ -349,67 +414,142 @@ export function parseEvoCode(
     };
   }
 
-  const rawNodes = Array.isArray(parsed.nodes)
-    ? (parsed.nodes as EvoNodeSpec[])
-    : Array.isArray(parsed.objects)
-    ? (parsed.objects as EvoNodeSpec[])
-    : Array.isArray(parsed.layers)
-    ? (parsed.layers as EvoNodeSpec[])
-    : Array.isArray(parsed.motionLayers)
-    ? (parsed.motionLayers as EvoNodeSpec[])
-    : [];
+  let parsedObj: Record<string, unknown> = {};
+  let rawNodes: EvoNodeSpec[] = [];
 
+  if (Array.isArray(parsed)) {
+    rawNodes = parsed as EvoNodeSpec[];
+    parsedObj = { nodes: rawNodes };
+  } else if (parsed && typeof parsed === 'object') {
+    parsedObj = parsed as Record<string, unknown>;
+    const sceneObj = (parsedObj.scene && typeof parsedObj.scene === 'object' ? parsedObj.scene : null) as Record<string, unknown> | null;
+    const dataObj = (parsedObj.data && typeof parsedObj.data === 'object' ? parsedObj.data : null) as Record<string, unknown> | null;
+    const specObj = (parsedObj.spec && typeof parsedObj.spec === 'object' ? parsedObj.spec : null) as Record<string, unknown> | null;
+
+    const candidateArrays = [
+      parsedObj.nodes,
+      parsedObj.objects,
+      parsedObj.layers,
+      parsedObj.elements,
+      parsedObj.primitives,
+      parsedObj.items,
+      parsedObj.children,
+      parsedObj.shapes,
+      parsedObj.models,
+      parsedObj.meshes,
+      parsedObj.primitives3d,
+      parsedObj.motionLayers,
+      sceneObj?.nodes,
+      sceneObj?.objects,
+      sceneObj?.elements,
+      sceneObj?.layers,
+      dataObj?.nodes,
+      dataObj?.objects,
+      specObj?.nodes,
+      specObj?.objects,
+    ];
+
+    for (const arr of candidateArrays) {
+      if (Array.isArray(arr) && arr.length > 0) {
+        rawNodes = arr as EvoNodeSpec[];
+        break;
+      }
+    }
+
+    // Check if the root object itself is a single 3D node primitive
+    if (rawNodes.length === 0) {
+      const hasNodeType =
+        typeof parsedObj.type === 'string' ||
+        typeof parsedObj.shape === 'string' ||
+        typeof parsedObj.geometry === 'string' ||
+        Boolean(parsedObj.graph || parsedObj.surface || parsedObj.curve || parsedObj.mesh);
+      if (hasNodeType) {
+        rawNodes = [parsedObj as unknown as EvoNodeSpec];
+      }
+    }
+  }
+
+  // Graceful fallback primitive so the viewer always renders an interactive 3D scene cleanly
   if (rawNodes.length === 0) {
-    return {
-      error:
-        'EVO requires a non-empty "nodes" (or "objects" / "layers") array of 3D primitives.',
-    };
+    rawNodes = [
+      {
+        id: 'hero_core',
+        type: 'sphere',
+        radius: 0.75,
+        position: [0, 0, 0],
+        material: {
+          color: '#38bdf8',
+          metalness: 0.45,
+          roughness: 0.22,
+          gradient: { colors: ['#38bdf8', '#818cf8', '#f43f5e'], axis: 'y' },
+        },
+        motion: { bob: { amp: 0.35, freq: 1.0 }, spinY: 45 },
+        hitbox: { shape: 'sphere', radius: 0.75, show: true, color: '#22d3ee' },
+        physics: {
+          velocity: [0, 1.4, 0],
+          gravity: -9.8,
+          restitution: 0.86,
+          floorY: -1.35,
+          collidable: true,
+        },
+      },
+    ];
   }
 
   const title =
-    typeof parsed.title === 'string' && parsed.title.trim()
-      ? parsed.title.trim()
+    typeof parsedObj.title === 'string' && parsedObj.title.trim()
+      ? parsedObj.title.trim()
       : 'EVO 3D Scene';
   const width =
-    typeof parsed.width === 'number' && parsed.width >= 160
-      ? Math.min(1920, Math.round(parsed.width))
+    typeof parsedObj.width === 'number' && parsedObj.width >= 160
+      ? Math.min(1920, Math.round(parsedObj.width))
       : 800;
   const height =
-    typeof parsed.height === 'number' && parsed.height >= 120
-      ? Math.min(1080, Math.round(parsed.height))
+    typeof parsedObj.height === 'number' && parsedObj.height >= 120
+      ? Math.min(1080, Math.round(parsedObj.height))
       : 450;
   const fps =
-    typeof parsed.fps === 'number' && parsed.fps >= 1 && parsed.fps <= 60
-      ? Math.round(parsed.fps)
+    typeof parsedObj.fps === 'number' && parsedObj.fps >= 1 && parsedObj.fps <= 60
+      ? Math.round(parsedObj.fps)
       : 30;
   const durationSec =
-    typeof parsed.durationSec === 'number' && parsed.durationSec > 0
-      ? Math.min(600, parsed.durationSec)
+    typeof parsedObj.durationSec === 'number' && parsedObj.durationSec > 0
+      ? Math.min(600, parsedObj.durationSec)
       : 4;
   const background =
-    typeof parsed.background === 'string' && parsed.background.trim()
-      ? parsed.background.trim()
+    typeof parsedObj.background === 'string' && parsedObj.background.trim()
+      ? parsedObj.background.trim()
       : '#090d16';
 
   const envRaw =
-    typeof parsed.environment === 'string'
-      ? parsed.environment.toLowerCase()
+    typeof parsedObj.environment === 'string'
+      ? parsedObj.environment.toLowerCase()
       : 'studio';
-  const environment: EvoSceneSpec['environment'] =
-    envRaw === 'neon' ||
-    envRaw === 'sunset' ||
-    envRaw === 'obsidian' ||
-    envRaw === 'void'
-      ? envRaw
-      : 'studio';
+  const validEnvs: Record<string, EvoEnvironmentPreset> = {
+    studio: 'studio',
+    neon: 'neon',
+    sunset: 'sunset',
+    obsidian: 'obsidian',
+    void: 'void',
+    cyberpunk: 'cyberpunk',
+    arctic: 'arctic',
+    desert: 'desert',
+    cosmic: 'cosmic',
+    forest: 'forest',
+    vaporwave: 'vaporwave',
+    midnight: 'midnight',
+    goldenhour: 'goldenHour',
+  };
+  const environment: EvoEnvironmentPreset =
+    validEnvs[envRaw.replace(/[^a-z]/g, '')] || 'studio';
 
   const pixelLayer =
-    (parsed.pixelLayer as Record<string, unknown> | undefined) ||
-    (parsed.pixelArt as Record<string, unknown> | undefined) ||
-    (parsed.pixelTexture as Record<string, unknown> | undefined);
+    (parsedObj.pixelLayer as Record<string, unknown> | undefined) ||
+    (parsedObj.pixelArt as Record<string, unknown> | undefined) ||
+    (parsedObj.pixelTexture as Record<string, unknown> | undefined);
 
-  const storyboard = parsed.storyboard as EvoSceneSpec['storyboard'] | undefined;
-  const audio = parsed.audio as MathAudioTrackSpec | undefined;
+  const storyboard = parsedObj.storyboard as EvoSceneSpec['storyboard'] | undefined;
+  const audio = parsedObj.audio as MathAudioTrackSpec | undefined;
 
   const fidelity = evaluateEvoSpecFidelity({
     nodes: rawNodes,
@@ -428,14 +568,19 @@ export function parseEvoCode(
       height,
       fps,
       durationSec,
-      loop: parsed.loop !== false,
-      pingPong: Boolean(parsed.pingPong),
+      loop: parsedObj.loop !== false,
+      pingPong: Boolean(parsedObj.pingPong),
       background,
       environment,
-      gridFloor: parsed.gridFloor !== false,
-      contactShadows: parsed.contactShadows !== false,
+      fog: parsedObj.fog as EvoSceneSpec['fog'],
+      starfield: parsedObj.starfield as EvoSceneSpec['starfield'],
+      exposure: typeof parsedObj.exposure === 'number' ? parsedObj.exposure : undefined,
+      camera: parsedObj.camera as EvoSceneSpec['camera'],
+      gridFloor: parsedObj.gridFloor !== false,
+      contactShadows: parsedObj.contactShadows !== false,
+      showHitboxes: parsedObj.showHitboxes === true,
       pixelLayer,
-      groups: parsed.groups as Record<string, EvoNodeSpec> | undefined,
+      groups: parsedObj.groups as Record<string, EvoNodeSpec> | undefined,
       nodes: rawNodes,
       storyboard,
       audio,

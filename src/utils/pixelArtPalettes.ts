@@ -146,7 +146,55 @@ export const PALETTE_PRESETS: PalettePreset[] = [
       '#9333ea',
     ],
   },
+  {
+    id: 'synthwave',
+    name: 'Synthwave Outrun',
+    description: 'Sunset magentas, electric cyan, and deep outrun violet',
+    colors: ['#0a0214', '#1b0736', '#3a0ca3', '#7209b7', '#b5179e', '#f72585', '#ff6b6b', '#ffd166', '#4cc9f0', '#4895ef', '#4361ee', '#f8f9fa'],
+  },
+  {
+    id: 'lava',
+    name: 'Volcanic Magma',
+    description: 'Obsidian basalt, glowing embers, and white-hot core tones',
+    colors: ['#0c0a09', '#1c1917', '#44403c', '#7c2d12', '#b91c1c', '#dc2626', '#ea580c', '#f97316', '#facc15', '#fef08a', '#ffffff'],
+  },
+  {
+    id: 'ice',
+    name: 'Glacial Arctic',
+    description: 'Deep abyssal navy, frosted cyan, and crisp snow highlights',
+    colors: ['#020617', '#0f172a', '#1e3a8a', '#0369a1', '#0284c7', '#06b6d4', '#22d3ee', '#67e8f9', '#cffafe', '#f0f9ff', '#ffffff'],
+  },
+  {
+    id: 'pastel',
+    name: 'Candy Pastel',
+    description: 'Soft creamy pastel ramp for stylized & cozy pixel art',
+    colors: ['#2b2d42', '#8d99ae', '#edf2f4', '#ffcad4', '#f4acb7', '#ff9ebb', '#bdb2ff', '#a0c4ff', '#9bf6ff', '#caffbf', '#fdffb6', '#ffd6a5'],
+  },
+  {
+    id: 'noir',
+    name: 'Film Noir',
+    description: 'High-contrast grayscale ramp with single crimson accent',
+    colors: ['#050505', '#171717', '#262626', '#404040', '#525252', '#737373', '#a3a3a3', '#d4d4d4', '#f5f5f5', '#ffffff', '#dc2626'],
+  },
+  {
+    id: 'forest',
+    name: 'Enchanted Forest',
+    description: 'Mossy greens, bark browns, and bioluminescent firefly gold',
+    colors: ['#052e16', '#14532d', '#166534', '#15803d', '#22c55e', '#86efac', '#451a03', '#78350f', '#92400e', '#d97706', '#fde047', '#ecfdf5'],
+  },
+  {
+    id: 'gold',
+    name: 'Gilded Royal',
+    description: 'Royal indigo, tarnished bronze, and gleaming gold highlights',
+    colors: ['#090d16', '#1e1b4b', '#312e81', '#78350f', '#b45309', '#d97706', '#f59e0b', '#fbbf24', '#fde047', '#fef9c3', '#ffffff'],
+  },
 ];
+
+export function resolveNamedPalette(name: string): string[] | null {
+  const key = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const found = PALETTE_PRESETS.find((p) => p.id.toLowerCase().replace(/[^a-z0-9]/g, '') === key);
+  return found ? found.colors : null;
+}
 
 export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   const clean = hex.replace('#', '').trim();

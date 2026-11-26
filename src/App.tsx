@@ -44,6 +44,7 @@ import { InstructionsModal } from './components/InstructionsModal';
 import { SafetyFiltersModal } from './components/SafetyFiltersModal';
 import { SessionPrivacyModal } from './components/SessionPrivacyModal';
 import { ChangelogsModal } from './components/ChangelogsModal';
+import { FolioDocsModal } from './components/FolioDocsModal';
 import { AccountModal } from './components/AccountModal';
 import { FunctionToolsModal } from './components/FunctionToolsModal';
 import { CodePreviewData, CodePreviewPanel } from './components/CodePreviewPanel';
@@ -98,12 +99,20 @@ const STARTER_PREVIEW_CODE = `<div style="max-width:420px;margin:24px auto;paddi
 
 const VALID_MODEL_IDS = new Set<ModelChoiceId>([
   'auto',
-  'flash-lite-3.1',
+  'flash-4',
   'hydrogen-4-fast',
   'hydrogen-4-balanced',
   'hydrogen-4-deep',
   'neon-4',
   'carbon-4',
+  'argon-4',
+  'flash-3.8',
+  'flash-lite-3.1',
+  'omni-flash-1.2',
+  'live-extended-3.8',
+  'gemma-3-27b',
+  'gemma-3-12b',
+  'neo-4',
   'nano-banana-lite',
 ]);
 
@@ -210,6 +219,7 @@ function createNewThread(
     messages: [],
     modelId,
     autoFallback: true,
+    neoMode: 'llm',
     systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
     safetyFilters,
     immersivePureCode: opts?.immersivePureCode ?? getDefaultPureCodePref(),
@@ -286,6 +296,7 @@ function normalizeThread(raw: Partial<ConversationThread> & Record<string, unkno
     messages: Array.isArray(raw.messages) ? (raw.messages as ChatMessage[]) : [],
     modelId,
     autoFallback: typeof raw.autoFallback === 'boolean' ? raw.autoFallback : true,
+    neoMode: raw.neoMode === 'rule' ? 'rule' : 'llm',
     systemInstruction:
       typeof raw.systemInstruction === 'string'
         ? raw.systemInstruction
@@ -345,6 +356,8 @@ export default function App() {
   const [safetyModalOpen, setSafetyModalOpen] = useState(false);
   const [privacyModalOpen, setPrivacyModalOpen] = useState(false);
   const [changelogsOpen, setChangelogsOpen] = useState(false);
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [docsInitialTab, setDocsInitialTab] = useState<'docs' | 'cli' | 'sdk' | 'changelog' | 'health'>('docs');
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -831,6 +844,7 @@ export default function App() {
           messages: payloadMessages,
           modelId,
           autoFallback,
+          neoMode: currentThread?.neoMode || 'llm',
           systemInstruction,
           safetyFilters,
           activeWorkspaceId,
@@ -838,6 +852,10 @@ export default function App() {
           isIncognito: Boolean(currentThread?.incognito),
           immersivePureCode:
             immersivePureCodeOverride ?? Boolean(currentThread?.immersivePureCode),
+          thinkingMode: currentThread?.thinkingMode || 'medium',
+          entropicAuditorEnabled: Boolean(currentThread?.entropicAuditorEnabled),
+          semanticEngineEnabled: currentThread?.semanticEngineEnabled !== false,
+          metaScriptingEnabled: Boolean(currentThread?.metaScriptingEnabled),
           customTools: customTools.filter((t) => t.enabled),
         };
         const requestBody = JSON.stringify(requestPayload);
@@ -1487,39 +1505,55 @@ export default function App() {
     [activeThread, streamingThreadId, updateThread]
   );
 
-  const handleRegenerateLatest = useCallback(() => {
-    if (!activeThread || streamingThreadId) return;
-    const msgs = activeThread.messages;
-    if (msgs.length === 0) return;
+  const handleRegenerateLatest = useCallback(
+    (overrides?: { modelId?: ModelChoiceId; autoFallback?: boolean }) => {
+      if (!activeThread || streamingThreadId) return;
+      const msgs = activeThread.messages;
+      if (msgs.length === 0) return;
 
-    const lastMsg = msgs[msgs.length - 1];
-    const baseHistory = lastMsg.role === 'model' ? msgs.slice(0, -1) : msgs;
-    if (baseHistory.length === 0) return;
+      const lastMsg = msgs[msgs.length - 1];
+      const baseHistory = lastMsg.role === 'model' ? msgs.slice(0, -1) : msgs;
+      if (baseHistory.length === 0) return;
 
-    const assistantMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'model',
-      text: '',
-      createdAt: Date.now(),
-      modelId: activeThread.modelId,
-    };
+      const nextModelId = overrides?.modelId ?? activeThread.modelId;
+      const nextAutoFallback = overrides?.autoFallback ?? activeThread.autoFallback;
 
-    updateThread(activeThread.id, (t) => ({
-      ...t,
-      updatedAt: Date.now(),
-      messages: [...baseHistory, assistantMessage],
-    }));
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'model',
+        text: '',
+        createdAt: Date.now(),
+        modelId: nextModelId,
+      };
 
-    void streamAssistantResponse(
-      activeThread.id,
-      baseHistory,
-      assistantMessage.id,
-      activeThread.modelId,
-      activeThread.autoFallback,
-      activeThread.systemInstruction,
-      activeThread.safetyFilters
-    );
-  }, [activeThread, streamingThreadId, updateThread, streamAssistantResponse]);
+      updateThread(activeThread.id, (t) => ({
+        ...t,
+        modelId: nextModelId,
+        autoFallback: nextAutoFallback,
+        updatedAt: Date.now(),
+        messages: [...baseHistory, assistantMessage],
+      }));
+
+      void streamAssistantResponse(
+        activeThread.id,
+        baseHistory,
+        assistantMessage.id,
+        nextModelId,
+        nextAutoFallback,
+        activeThread.systemInstruction,
+        activeThread.safetyFilters
+      );
+    },
+    [activeThread, streamingThreadId, updateThread, streamAssistantResponse]
+  );
+
+  const handleRetryWithFallback = useCallback(() => {
+    handleRegenerateLatest({ autoFallback: true });
+  }, [handleRegenerateLatest]);
+
+  const handleSwitchToNeo4AndRetry = useCallback(() => {
+    handleRegenerateLatest({ modelId: 'neo-4' });
+  }, [handleRegenerateLatest]);
 
   const handleNewChat = useCallback(() => {
     if (streamingThreadId) {
@@ -2179,6 +2213,10 @@ export default function App() {
             webPreviewOpen={Boolean(webPreviewUrl)}
             onOpenSidebar={() => setSidebarOpen(true)}
             onNewChat={handleNewChat}
+            neoMode={activeThread.neoMode || 'llm'}
+            onChangeNeoMode={(neoMode) =>
+              updateThread(activeThread.id, (t) => ({ ...t, neoMode }))
+            }
             onChangeModel={(modelId) =>
               updateThread(activeThread.id, (t) => ({ ...t, modelId }))
             }
@@ -2200,6 +2238,10 @@ export default function App() {
               updateThread(activeThread.id, (t) => ({ ...t, triModelConfig }))
             }
             onOpenChangelogs={() => setChangelogsOpen(true)}
+            onOpenDocs={(tab) => {
+              setDocsInitialTab(tab || 'docs');
+              setDocsOpen(true);
+            }}
             onOpenSafety={() => setSafetyModalOpen(true)}
             onOpenSessionPrivacy={() => setPrivacyModalOpen(true)}
             onOpenCodePreview={handleToggleCodePreview}
@@ -2296,8 +2338,12 @@ export default function App() {
                       onEditAndResend={handleEditAndResend}
                       onUpdateMessage={handleUpdateMessage}
                       onDeleteMessage={handleDeleteMessage}
-                      onRegenerate={handleRegenerateLatest}
-                      onRetryError={handleRegenerateLatest}
+                      onRegenerate={() => handleRegenerateLatest()}
+                      onRetryError={() => handleRegenerateLatest()}
+                      onRetryWithFallback={
+                        activeThread.autoFallback ? undefined : handleRetryWithFallback
+                      }
+                      onSwitchToNeo4={handleSwitchToNeo4AndRetry}
                       onPreviewCode={handleOpenCodePreview}
                       onSaveCodeToFolder={handleSaveCodeToFolder}
                       onCreateFoldersInWorkspace={handleCreateFoldersInWorkspace}
@@ -2464,6 +2510,18 @@ export default function App() {
       <ChangelogsModal
         isOpen={changelogsOpen}
         onClose={() => setChangelogsOpen(false)}
+        onSelectPrompt={(prompt) => {
+          handleSendMessage(prompt, []);
+        }}
+      />
+
+      <FolioDocsModal
+        isOpen={docsOpen}
+        initialTab={docsInitialTab}
+        onClose={() => setDocsOpen(false)}
+        onSelectPrompt={(prompt) => {
+          handleSendMessage(prompt, []);
+        }}
       />
 
       <AccountModal

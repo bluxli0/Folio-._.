@@ -54,6 +54,11 @@ const BUILTIN_TOOLS: BuiltInToolMeta[] = [
     sampleArgs: JSON.stringify({ pythonCode: 'import bpy\nprint("Blender objects:", len(bpy.data.objects))' }, null, 2),
   },
   {
+    name: 'antigravity_cli',
+    description: 'Run the Antigravity Autonomous Agent CLI (cloud Interactions API or local workspace sandbox) for coding, testing, file ops, and verification.',
+    sampleArgs: JSON.stringify({ action: 'inspect', task: 'Inspect workspace files and summarize project structure', agentModel: 'gemini-4-carbon' }, null, 2),
+  },
+  {
     name: 'validate_creative_code',
     description: 'Validate evo, stopmotion, pixelart, liquidmotion, bbmodel, chart, or quiz JSON specs.',
     sampleArgs: JSON.stringify({ kind: 'evo', code: '{"format":"evo/v1","nodes":[{"type":"sphere"}]}' }, null, 2),

@@ -12,7 +12,13 @@ export type VectorBrushStyle =
   | 'airbrush'
   | 'neon'
   | 'watercolor'
-  | 'pixel';
+  | 'pixel'
+  | 'spray'
+  | 'charcoal'
+  | 'ribbon'
+  | 'sparkle'
+  | 'doubleline'
+  | 'stipple';
 
 export type DrawTool =
   | VectorBrushStyle

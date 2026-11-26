@@ -1,14 +1,36 @@
+export type MathAudioPresetName =
+  | 'chime'
+  | 'clockwork'
+  | 'subbass'
+  | 'synthlead'
+  | 'ambient'
+  | 'ambient_chime'
+  | 'sci_fi_arp'
+  | 'cyberpunk_arp'
+  | 'retro_8bit'
+  | 'crystal_bells'
+  | 'deep_drone'
+  | 'arcade_jump'
+  | 'laser_pulse'
+  | 'rain_noise'
+  | 'heartbeat'
+  | 'lofi_chord'
+  | 'quantum_pad'
+  | 'warp_riser'
+  | 'marimba'
+  | 'orchestral_brass';
+
 export interface MathAudioTrackSpec {
   mode?: 'math' | 'preset';
   formula?: string;
-  preset?: 'chime' | 'clockwork' | 'subbass' | 'synthlead' | 'ambient';
+  preset?: MathAudioPresetName | string;
   durationSec?: number;
   sampleRate?: number;
   gain?: number;
 }
 
 export const MATH_AUDIO_PRESETS: Record<
-  NonNullable<MathAudioTrackSpec['preset']>,
+  string,
   { label: string; formula: string; description: string }
 > = {
   chime: {
@@ -16,6 +38,12 @@ export const MATH_AUDIO_PRESETS: Record<
     formula:
       '(sin(TAU * 523.25 * t) * 0.55 + sin(TAU * 659.25 * t) * 0.35 + sin(TAU * 783.99 * t) * 0.25) * exp(-mod(t, 1.0) * 3.8)',
     description: 'C major triad bell overtones with exponential decay.',
+  },
+  ambient_chime: {
+    label: 'Ambient Studio Chime',
+    formula:
+      '(sin(TAU * 440 * t) * 0.4 + sin(TAU * 554.37 * t) * 0.3 + sin(TAU * 659.25 * t) * 0.25 + sin(TAU * 880 * t) * 0.15) * exp(-mod(t, 1.5) * 2.4) * (0.7 + 0.3 * sin(TAU * 0.5 * t))',
+    description: 'Shimmering A-major ambient bell chime.',
   },
   clockwork: {
     label: 'Mechanical Clockwork Tick',
@@ -40,6 +68,90 @@ export const MATH_AUDIO_PRESETS: Record<
     formula:
       '(sin(TAU * 220 * t + sin(TAU * 0.4 * t) * 0.5) + cos(TAU * 277.18 * t) * 0.7 + sin(TAU * 329.63 * t) * 0.6) * 0.28 * (0.65 + 0.35 * sin(TAU * 0.25 * t))',
     description: 'Smooth detuned harmonic pad.',
+  },
+  sci_fi_arp: {
+    label: 'Sci-Fi Hyper Arpeggio',
+    formula:
+      'fm(220 * pow(2, floor(mod(t * 6, 6)) * 2 / 12), 110, 1.4, t) * adsr(mod(t, 0.166), 0.166, 0.01, 0.06, 0.45, 0.05)',
+    description: 'Futuristic FM harmonic sequence for 3D & cyberpunk scenes.',
+  },
+  cyberpunk_arp: {
+    label: 'Cyberpunk Neon Bassline',
+    formula:
+      'softclip(saw(55 * (1 + floor(mod(t * 4, 4)) * 0.25) * t) * 0.9 + square(110 * t, 0.35) * 0.35, 1.8) * envexp(mod(t, 0.25), 7)',
+    description: 'Saturated neon synthwave arpeggio bass.',
+  },
+  retro_8bit: {
+    label: '8-Bit Chiptune Lead',
+    formula:
+      'bitcrush(square((261.63 * pow(2, floor(mod(t * 8, 5)) / 12)) * t, 0.25), 4) * adsr(mod(t, 0.125), 0.125, 0.005, 0.04, 0.5, 0.03)',
+    description: 'Classic quantized 8-bit square pulse melody.',
+  },
+  crystal_bells: {
+    label: 'FM Crystal Bells',
+    formula:
+      'fm(587.33, 1468.3, 2.2 * exp(-mod(t, 1.2) * 3), t) * exp(-mod(t, 1.2) * 2.8) * 0.7',
+    description: 'Glassy inharmonic FM bell chimes.',
+  },
+  deep_drone: {
+    label: 'Obsidian Void Drone',
+    formula:
+      'softclip(chord3(t, 55, 82.41, 110.25) * (0.6 + 0.4 * lfo(t, 0.25)), 1.5) * 0.5',
+    description: 'Rich sub-harmonic cinematic drone.',
+  },
+  arcade_jump: {
+    label: 'Arcade Kinetic Bounce',
+    formula:
+      'square((180 + 480 * clamp01(mod(t, 0.6) * 2.5)) * t, 0.5) * envexp(mod(t, 0.6), 6)',
+    description: 'Upward pitch-sweep kinetic impact SFX.',
+  },
+  laser_pulse: {
+    label: 'Photon Laser Sweep',
+    formula:
+      'sin(TAU * (920 * exp(-mod(t, 0.5) * 8) + 90) * t) * envexp(mod(t, 0.5), 5.5)',
+    description: 'Exponential downward frequency sweep sci-fi laser.',
+  },
+  rain_noise: {
+    label: 'Atmospheric Rain Wash',
+    formula:
+      '(pink(t * 1400) * 0.55 + white(t * 3200) * 0.18) * (0.75 + 0.25 * lfo(t, 0.35))',
+    description: 'Filtered pink/white rainfall ambience.',
+  },
+  heartbeat: {
+    label: 'Sub Heartbeat Pulse',
+    formula:
+      'sin(TAU * 52 * t) * (envexp(mod(t, 1.0), 14) + 0.7 * envexp(mod(t + 0.78, 1.0), 16))',
+    description: 'Double-thump organic rhythmic pulse.',
+  },
+  lofi_chord: {
+    label: 'Lo-Fi Warm Electric Chord',
+    formula:
+      'softclip(chord4(t, 261.63, 311.13, 392.0, 466.16) * (0.85 + 0.15 * vibrato(t, 4.5, 0.02)), 1.2) * (0.5 + 0.5 * exp(-mod(t, 2.0) * 1.4))',
+    description: 'Warm minor-7th chord progression with tape wobble.',
+  },
+  quantum_pad: {
+    label: 'Quantum Shimmer Pad',
+    formula:
+      '(chorus(t, 220, 0.008) + 0.5 * chorus(t, 329.63, 0.012)) * 0.45 * (0.65 + 0.35 * sin(TAU * 0.2 * t))',
+    description: 'Detuned multi-voice shimmer pad.',
+  },
+  warp_riser: {
+    label: 'Hyperspace Warp Riser',
+    formula:
+      'fm(110 + 660 * (t / max(0.5, dur)), 55, 2.5, t) * clamp01(t / max(0.5, dur)) * 0.7',
+    description: 'Continuous pitch-climbing warp riser.',
+  },
+  marimba: {
+    label: 'Tactile Wooden Marimba',
+    formula:
+      '(sin(TAU * 392 * t) * 0.7 + sin(TAU * 1568 * t) * 0.2 * exp(-mod(t, 0.4) * 28)) * exp(-mod(t, 0.4) * 9)',
+    description: 'Percussive woody fourth-harmonic mallet tone.',
+  },
+  orchestral_brass: {
+    label: 'Brass Fanfare Swell',
+    formula:
+      'softclip((saw(146.83 * t) * 0.5 + saw(220 * t) * 0.35 + saw(293.66 * t) * 0.3) * smoothstep(mod(t, 2.0), 0, 0.35), 1.6) * 0.6',
+    description: 'Warm brass fifth harmonic swell.',
   },
 };
 
@@ -310,27 +422,104 @@ export function compileAudioFormulaAst(rawFormula: string): (t: number, dur: num
             return Math.max(...a);
           case 'clamp':
             return Math.max(y, Math.min(z, x));
+          case 'clamp01':
+            return Math.max(0, Math.min(1, x));
+          case 'step':
+            return y < x ? 0 : 1;
+          case 'smoothstep': {
+            const u = Math.max(0, Math.min(1, (x - y) / ((z || 1) - y || 1)));
+            return u * u * (3 - 2 * u);
+          }
+          case 'fract':
+            return x - Math.floor(x);
+          case 'sign':
+            return Math.sign(x);
           case 'lerp':
           case 'mix':
             return x + (y - x) * z;
           case 'mod':
             return y === 0 ? 0 : ((x % y) + y) % y;
-          case 'saw': {
+          case 'saw':
+          case 'sawtooth': {
             const p = ((x % 1) + 1) % 1;
             return p * 2 - 1;
           }
-          case 'tri': {
+          case 'tri':
+          case 'triangle': {
             const p = ((x % 1) + 1) % 1;
             return 1 - 4 * Math.abs(Math.round(p - 0.25) - (p - 0.25));
           }
-          case 'square': {
+          case 'square':
+          case 'pulse': {
             const p = ((x % 1) + 1) % 1;
             return p < (a[1] ?? 0.5) ? 1 : -1;
           }
-          case 'noise': {
+          case 'noise':
+          case 'white': {
             const s = Math.sin(x * 12.9898 + 78.233) * 43758.5453;
             return (s - Math.floor(s)) * 2 - 1;
           }
+          case 'pink': {
+            const s1 = Math.sin(x * 12.9898 + 78.233) * 43758.5453;
+            const s2 = Math.sin(x * 0.5 * 39.346 + 11.135) * 24634.6345;
+            const s3 = Math.sin(x * 0.25 * 73.156 + 52.235) * 19384.2341;
+            return (((s1 - Math.floor(s1)) + (s2 - Math.floor(s2)) + (s3 - Math.floor(s3))) / 3) * 2 - 1;
+          }
+          case 'lfo':
+            return 0.5 + 0.5 * Math.sin(Math.PI * 2 * (y || 1) * x + z);
+          case 'fm':
+          case 'pm': {
+            const car = x || 220;
+            const modF = y || 110;
+            const idx = a[2] ?? 1.2;
+            const tv = a[3] ?? t;
+            return Math.sin(Math.PI * 2 * car * tv + idx * Math.sin(Math.PI * 2 * modF * tv));
+          }
+          case 'ringmod':
+            return Math.sin(Math.PI * 2 * x * t) * Math.sin(Math.PI * 2 * (y || 110) * t);
+          case 'bitcrush': {
+            const bits = Math.max(1, Math.min(16, Math.round(y || 4)));
+            const levels = Math.pow(2, bits);
+            return Math.round(x * levels) / levels;
+          }
+          case 'fold': {
+            const g = y || 2;
+            return Math.sin(x * g * Math.PI * 0.5);
+          }
+          case 'softclip':
+            return Math.tanh(x * (y || 1.5));
+          case 'hardclip':
+            return Math.max(-(y || 1), Math.min(y || 1, x));
+          case 'midi2hz':
+            return 440 * Math.pow(2, (x - 69) / 12);
+          case 'chord3':
+            return (Math.sin(Math.PI * 2 * y * x) + Math.sin(Math.PI * 2 * z * x) + Math.sin(Math.PI * 2 * (a[3] ?? z * 1.25) * x)) / 3;
+          case 'chord4':
+            return (
+              Math.sin(Math.PI * 2 * y * x) +
+              Math.sin(Math.PI * 2 * z * x) +
+              Math.sin(Math.PI * 2 * (a[3] ?? z * 1.25) * x) +
+              Math.sin(Math.PI * 2 * (a[4] ?? z * 1.5) * x)
+            ) / 4;
+          case 'chorus': {
+            const freq = y || 220;
+            const detune = z || 0.01;
+            return (
+              Math.sin(Math.PI * 2 * freq * x) +
+              Math.sin(Math.PI * 2 * freq * (1 + detune) * x) +
+              Math.sin(Math.PI * 2 * freq * (1 - detune) * x)
+            ) / 3;
+          }
+          case 'vibrato':
+            return Math.sin(Math.PI * 2 * (y || 5) * x) * (z || 0.05);
+          case 'tremolo':
+            return 1 - (z || 0.4) * (0.5 + 0.5 * Math.sin(Math.PI * 2 * (y || 4) * x));
+          case 'envexp':
+            return Math.exp(-Math.max(0, x) * (y || 5));
+          case 'ramp':
+            return Math.max(0, Math.min(1, x / Math.max(1e-4, y || 1)));
+          case 'gate':
+            return x >= y && x <= (z || y + 0.1) ? 1 : 0;
           case 'adsr': {
             const localT = x;
             const totalDur = Math.max(0.01, y || 1);

@@ -140,10 +140,14 @@ export function parseHybridCode(
   if (pixelBlock) {
     const { urls } = buildPixelLayerDataUrls(pixelBlock);
     if (urls.length > 0) {
-      const targetW = typeof parsed.pixelRenderWidth === 'number' ? parsed.pixelRenderWidth : width;
-      const targetH = typeof parsed.pixelRenderHeight === 'number' ? parsed.pixelRenderHeight : height;
+      const pScale = typeof parsed.pixelScale === 'number' ? parsed.pixelScale : 1;
+      const targetW = (typeof parsed.pixelRenderWidth === 'number' ? parsed.pixelRenderWidth : width) * pScale;
+      const targetH = (typeof parsed.pixelRenderHeight === 'number' ? parsed.pixelRenderHeight : height) * pScale;
       const pxX = typeof parsed.pixelX === 'number' ? parsed.pixelX : (width - targetW) / 2;
       const pxY = typeof parsed.pixelY === 'number' ? parsed.pixelY : (height - targetH) / 2;
+      const pBlend = typeof parsed.pixelBlendMode === 'string' ? parsed.pixelBlendMode : 'normal';
+      const pOpacity = typeof parsed.pixelOpacity === 'number' ? parsed.pixelOpacity : 1;
+      const imgStyle = `image-rendering: pixelated; mix-blend-mode: ${pBlend}; opacity: ${pOpacity};`;
 
       if (urls.length === 1 || kind === 'liquiddrop' || kind === 'motiondrop') {
         syntheticLayers.push({
@@ -152,7 +156,7 @@ export function parseHybridCode(
           y: pxY,
           motion: parsed.pixelMotion as StopMotionLayerSpec['motion'],
           shadow: parsed.pixelShadow as StopMotionLayerSpec['shadow'],
-          svg: `<image href="${urls[0]}" width="${targetW}" height="${targetH}" preserveAspectRatio="xMidYMid meet" style="image-rendering: pixelated;" />`,
+          svg: `<image href="${urls[0]}" width="${targetW}" height="${targetH}" preserveAspectRatio="xMidYMid meet" style="${imgStyle}" />`,
         });
       } else {
         urls.forEach((url, idx) => {
@@ -164,7 +168,7 @@ export function parseHybridCode(
             visibleFrom: idx * slice,
             visibleTo: idx === urls.length - 1 ? 1.01 : (idx + 1) * slice - 0.0001,
             motion: parsed.pixelMotion as StopMotionLayerSpec['motion'],
-            svg: `<image href="${url}" width="${targetW}" height="${targetH}" preserveAspectRatio="xMidYMid meet" style="image-rendering: pixelated;" />`,
+            svg: `<image href="${url}" width="${targetW}" height="${targetH}" preserveAspectRatio="xMidYMid meet" style="${imgStyle}" />`,
           });
         });
       }
@@ -177,7 +181,33 @@ export function parseHybridCode(
     ? (parsed.motionLayers as StopMotionLayerSpec[])
     : [];
 
-  const combinedLayers = [...syntheticLayers, ...userLayers];
+  const extraOverlayLayers: StopMotionLayerSpec[] = [];
+  if (parsed.particles && typeof parsed.particles === 'object') {
+    extraOverlayLayers.push({
+      id: 'hybrid-particles',
+      particles: parsed.particles as StopMotionLayerSpec['particles'],
+    });
+  }
+  if (parsed.lighting && typeof parsed.lighting === 'object') {
+    const rimCol = String((parsed.lighting as Record<string, unknown>).rimColor || '#38bdf8');
+    extraOverlayLayers.push({
+      id: 'hybrid-rim-light',
+      blendMode: 'screen',
+      opacity: 0.42,
+      svg: `<ellipse cx="${width * 0.5}" cy="${height * 0.18}" rx="${width * 0.42}" ry="${height * 0.14}" fill="${rimCol}" filter="url(#neonBloom)" />`,
+    });
+  }
+
+  let fgOverlay = typeof parsed.foreground === 'string' ? parsed.foreground : '';
+  if (parsed.letterbox) {
+    const barH = Math.round(height * 0.08);
+    fgOverlay += `<rect x="0" y="0" width="${width}" height="${barH}" fill="#020617" /><rect x="0" y="${height - barH}" width="${width}" height="${barH}" fill="#020617" />`;
+  }
+  if (typeof parsed.frameOverlay === 'string') {
+    fgOverlay += parsed.frameOverlay;
+  }
+
+  const combinedLayers = [...syntheticLayers, ...userLayers, ...extraOverlayLayers];
   if (combinedLayers.length === 0) {
     // Provide graceful fallback visual if only top-level svg/glow/threeD provided
     if (typeof parsed.svg === 'string') {
@@ -197,6 +227,17 @@ export function parseHybridCode(
     }
   }
 
+  const validEffects = new Set(['vignette', 'chromatic', 'bloom', 'grain', 'sepia', 'noir', 'cyberpunk', 'crt', 'none']);
+  const postFilterPreset =
+    typeof parsed.postFilter === 'string' && validEffects.has(parsed.postFilter)
+      ? (parsed.postFilter as NonNullable<StopMotionSceneV2['storyboard']>['shots'][number]['effect'])
+      : undefined;
+  const resolvedStoryboard: StopMotionSceneV2['storyboard'] =
+    (parsed.storyboard as StopMotionSceneV2['storyboard']) ||
+    (postFilterPreset
+      ? { shots: [{ label: 'Hybrid Pass', start: 0, end: 1, effect: postFilterPreset }] }
+      : undefined);
+
   const scene: StopMotionSceneV2 = {
     format: kind,
     title,
@@ -210,9 +251,9 @@ export function parseHybridCode(
     pingPong: Boolean(parsed.pingPong),
     defs: typeof parsed.defs === 'string' ? parsed.defs : undefined,
     backdrop: typeof parsed.backdrop === 'string' ? parsed.backdrop : undefined,
-    foreground: typeof parsed.foreground === 'string' ? parsed.foreground : undefined,
+    foreground: fgOverlay || undefined,
     groups: parsed.groups as StopMotionSceneV2['groups'],
-    storyboard: parsed.storyboard as StopMotionSceneV2['storyboard'],
+    storyboard: resolvedStoryboard,
     threeLighting: parsed.threeLighting as StopMotionSceneV2['threeLighting'],
     audio: parsed.audio as StopMotionSceneV2['audio'],
     layers: combinedLayers,
